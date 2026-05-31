@@ -2,6 +2,7 @@ name: Deploy Lottery Data
 
 on:
   push:
+    # 엑셀 파일이 수정될 때마다 자동 실행됩니다.
     paths:
       - '로또 회차별 당첨번호.xlsx'
 
@@ -19,7 +20,7 @@ jobs:
       - name: Run Converter
         run: |
           python convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" --version 3 --output-dir dist --base-url "https://s73325475-cyber.github.io/lotto-data"
-            - name: Deploy
+      - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
