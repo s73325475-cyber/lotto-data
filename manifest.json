@@ -1,7 +1,7 @@
 {
-  "version": 2,
-  "latestDrawNo": 1225,
-  "drawsUrl": "https://s73325475-cyber.github.io/lotto-data/draws_v2.json",
-  "sha256": "2a4cecaa324570009e68be890d7e69d3ae1248f41229986c58970e05956af8a9",
-  "updatedAt": "2026-05-26T14:00:50Z"
+  "version": 3,
+  "latestDrawNo": 1226,
+  "drawsUrl": "https://example.com/lotto/draws_v3.json",
+  "sha256": "8f9f9a8db71ad7358391e9ac36bc81823a292cd869b41d886303a156d5fad5d7",
+  "updatedAt": "2026-05-31T14:54:03Z"
 }
