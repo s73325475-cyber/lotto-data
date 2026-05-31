@@ -24,12 +24,14 @@ jobs:
           # 1. 엑셀 데이터를 JSON으로 변환
           python convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" --version 3 --output-dir dist --base-url "https://s73325475-cyber.github.io/lotto-data"
           
-          # 2. manifest.json이 dist 폴더에 생성/복사되었는지 확인 및 갱신 로직
-          # 만약 스크립트에서 자동 생성된다면 이 단계는 생략 가능합니다.
-          # 자동 생성되지 않는 경우를 대비해 스크립트 실행 후 dist 폴더 상태를 최신화합니다.
-          echo "Converter finished. Dist folder content:"
-          ls -R dist
+          # 2. manifest.json 갱신 (직접 생성/업데이트)
+          # 파이썬 스크립트가 manifest를 자동으로 안 만든다면, 여기서 직접 최신 회차 번호를 써서 파일을 생성합니다.
+          # 1227회 데이터를 반영하도록 강제로 latestDrawNo를 1227로 업데이트합니다.
+          echo '{"version": 3, "latestDrawNo": 1227, "updatedAt": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"}' > dist/manifest.json
           
+          echo "Build completed. Content of dist folder:"
+          ls -R dist
+
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
