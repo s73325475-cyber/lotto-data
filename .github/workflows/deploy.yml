@@ -2,6 +2,8 @@ name: Deploy Lottery Data
 
 on:
   push:
+    branches:
+      - main
     paths:
       - '로또 회차별 당첨번호.xlsx'
 
