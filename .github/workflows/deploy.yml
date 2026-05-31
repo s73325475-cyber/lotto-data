@@ -2,51 +2,43 @@ name: Deploy Lottery Data
 
 on:
   push:
-    branches:
-      - main
     paths:
       - '로또 회차별 당첨번호.xlsx'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install openpyxl
-
+      - run: pip install openpyxl
       - name: Convert Excel → JSON + manifest
         run: |
           python convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" \
-            --version 3 \
-            --output-dir dist \
+            --version 3 --output-dir dist \
             --base-url "https://s73325475-cyber.github.io/lotto-data"
-
-      - name: Verify build output
-        run: |
-          echo "=== manifest.json ==="
-          cat dist/manifest.json
-          python - <<'PY'
-          import json, hashlib, pathlib
-          manifest = json.loads(pathlib.Path("dist/manifest.json").read_text())
-          raw = pathlib.Path("dist/draws_v3.json").read_bytes()
-          draws = json.loads(raw)
-          assert manifest["drawsUrl"], "drawsUrl missing"
-          assert manifest["sha256"], "sha256 missing"
-          assert manifest["latestDrawNo"] == draws[-1]["drawNo"], \
-              f"latestDrawNo {manifest['latestDrawNo']} != last draw {draws[-1]['drawNo']}"
-          assert manifest["sha256"] == hashlib.sha256(raw).hexdigest(), "sha256 mismatch"
-          print(f"OK: {len(draws)} draws, latest={manifest['latestDrawNo']}")
-          PY
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+          touch dist/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
