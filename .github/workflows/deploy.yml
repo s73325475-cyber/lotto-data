@@ -2,26 +2,46 @@ name: Deploy Lottery Data
 
 on:
   push:
-    # 엑셀 파일이 수정될 때마다 자동 실행됩니다.
+    branches: [main]
     paths:
       - '로또 회차별 당첨번호.xlsx'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:  # <--- 이 줄을 추가하면 Actions 탭에서 수동 실행 버튼이 생깁니다!
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-      - name: Install dependencies
-        run: pip install pandas openpyxl
-      - name: Run Converter
+          python-version: '3.11'
+      - run: pip install openpyxl
+      - name: Convert Excel → JSON + manifest
         run: |
-          python convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" --version 3 --output-dir dist --base-url "https://s73325475-cyber.github.io/lotto-data"
-      - name: Deploy
-        uses: peaceiris/actions-gh-pages@v3
+          python convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" \
+            --version 3 --output-dir dist \
+            --base-url "https://s73325475-cyber.github.io/lotto-data"
+          touch dist/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
