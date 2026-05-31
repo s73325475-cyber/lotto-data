@@ -2,8 +2,11 @@ name: Deploy Lottery Data
 
 on:
   push:
+    branches: [main]
     paths:
       - '로또 회차별 당첨번호.xlsx'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:  # <--- 이 줄을 추가하면 Actions 탭에서 수동 실행 버튼이 생깁니다!
 
 permissions:
   contents: read
