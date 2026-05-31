@@ -1,0 +1,25 @@
+name: Deploy Lottery Data
+
+on:
+  push:
+    paths:
+      - '로또 회차별 당첨번호.xlsx'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install pandas openpyxl
+      - name: Run Converter
+        run: python tools/convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" --version 3 --output-dir dist --base-url "https://s73325475-cyber.github.io/lotto-data"
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
