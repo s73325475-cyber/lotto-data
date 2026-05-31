@@ -9,31 +9,42 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          
-      - name: Install dependencies
-        run: pip install pandas openpyxl
-        
-      - name: Run Converter
-        run: |
-          # 1. 엑셀 데이터를 JSON으로 변환
-          python convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" --version 3 --output-dir dist --base-url "https://s73325475-cyber.github.io/lotto-data"
-          
-          # 2. manifest.json 갱신 (직접 생성/업데이트)
-          # 파이썬 스크립트가 manifest를 자동으로 안 만든다면, 여기서 직접 최신 회차 번호를 써서 파일을 생성합니다.
-          # 1227회 데이터를 반영하도록 강제로 latestDrawNo를 1227로 업데이트합니다.
-          echo '{"version": 3, "latestDrawNo": 1227, "updatedAt": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"}' > dist/manifest.json
-          
-          echo "Build completed. Content of dist folder:"
-          ls -R dist
+      - uses: actions/checkout@v4
 
-      - name: Deploy
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install openpyxl
+
+      - name: Convert Excel → JSON + manifest
+        run: |
+          python convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" \
+            --version 3 \
+            --output-dir dist \
+            --base-url "https://s73325475-cyber.github.io/lotto-data"
+
+      - name: Verify build output
+        run: |
+          echo "=== manifest.json ==="
+          cat dist/manifest.json
+          python - <<'PY'
+          import json, hashlib, pathlib
+          manifest = json.loads(pathlib.Path("dist/manifest.json").read_text())
+          raw = pathlib.Path("dist/draws_v3.json").read_bytes()
+          draws = json.loads(raw)
+          assert manifest["drawsUrl"], "drawsUrl missing"
+          assert manifest["sha256"], "sha256 missing"
+          assert manifest["latestDrawNo"] == draws[-1]["drawNo"], \
+              f"latestDrawNo {manifest['latestDrawNo']} != last draw {draws[-1]['drawNo']}"
+          assert manifest["sha256"] == hashlib.sha256(raw).hexdigest(), "sha256 mismatch"
+          print(f"OK: {len(draws)} draws, latest={manifest['latestDrawNo']}")
+          PY
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
