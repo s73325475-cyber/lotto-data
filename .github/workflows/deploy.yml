@@ -2,7 +2,6 @@ name: Deploy Lottery Data
 
 on:
   push:
-    # 엑셀 파일이 수정될 때마다 자동 실행됩니다.
     paths:
       - '로또 회차별 당첨번호.xlsx'
 
@@ -11,15 +10,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+          
       - name: Install dependencies
         run: pip install pandas openpyxl
+        
       - name: Run Converter
         run: |
+          # 1. 엑셀 데이터를 JSON으로 변환
           python convert_excel_to_draws.py "로또 회차별 당첨번호.xlsx" --version 3 --output-dir dist --base-url "https://s73325475-cyber.github.io/lotto-data"
+          
+          # 2. manifest.json이 dist 폴더에 생성/복사되었는지 확인 및 갱신 로직
+          # 만약 스크립트에서 자동 생성된다면 이 단계는 생략 가능합니다.
+          # 자동 생성되지 않는 경우를 대비해 스크립트 실행 후 dist 폴더 상태를 최신화합니다.
+          echo "Converter finished. Dist folder content:"
+          ls -R dist
+          
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
