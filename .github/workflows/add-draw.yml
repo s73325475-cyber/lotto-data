@@ -57,17 +57,20 @@ jobs:
 
       - name: Commit data files
         run: |
+          set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "*.xlsx" manifest.json draws_v*.json
-          # dist는 Pages artifact로만 올리고, 엑셀 lock 파일은 제외
-          git reset -- "dist" '~$*' 2>/dev/null || true
+          # 따옴표 없이 glob — "*.xlsx"는 리터럴로 인식되어 엑셀이 빠질 수 있음
+          git add manifest.json draws_v*.json
+          git add ./*.xlsx || true
+          # Excel 임시 잠금 파일은 커밋하지 않음
+          git reset -- './~$'*.xlsx 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No changes to commit"
-          else
-            git commit -m "data: add draw ${{ inputs.draw_no }}"
-            git push
+            exit 1
           fi
+          git commit -m "data: add draw ${{ inputs.draw_no }}"
+          git push
 
       - name: Prepare Pages artifact
         run: |
