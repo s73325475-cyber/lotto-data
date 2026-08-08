@@ -1,0 +1,85 @@
+# 모바일: GitHub 앱 → Actions → Add lotto draw → Run workflow
+# 입력한 회차를 엑셀에 추가하고, 기존과 같이 JSON 생성 후 Pages 배포까지 수행합니다.
+
+name: Add lotto draw
+
+on:
+  workflow_dispatch:
+    inputs:
+      draw_no:
+        description: '회차 (예: 1236)'
+        required: true
+        type: string
+      numbers:
+        description: '당첨번호 6개 (예: 3,7,12,21,30,41)'
+        required: true
+        type: string
+      bonus:
+        description: '보너스 (예: 15)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  append-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install openpyxl
+
+      - name: Append draw (excel → json)
+        run: |
+          python scripts/add_draw.py \
+            --draw-no "${{ inputs.draw_no }}" \
+            --numbers "${{ inputs.numbers }}" \
+            --bonus "${{ inputs.bonus }}" \
+            --repo-root . \
+            --version 3
+
+      - name: Commit data files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "*.xlsx" manifest.json draws_v*.json
+          # dist는 Pages artifact로만 올리고, 엑셀 lock 파일은 제외
+          git reset -- "dist" '~$*' 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "data: add draw ${{ inputs.draw_no }}"
+            git push
+          fi
+
+      - name: Prepare Pages artifact
+        run: |
+          mkdir -p dist
+          cp "draws_v3.json" "manifest.json" dist/
+          touch dist/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
