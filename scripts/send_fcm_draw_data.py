@@ -114,7 +114,7 @@ def main() -> None:
 
     raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
     if not raw:
-        msg = "FIREBASE_SERVICE_ACCOUNT_JSON 미설정 — FCM 스킵"
+        msg = "FIREBASE_SERVICE_ACCOUNT_JSON missing - skip FCM"
         if args.allow_missing_secret:
             print(f"::warning::{msg}")
             return
