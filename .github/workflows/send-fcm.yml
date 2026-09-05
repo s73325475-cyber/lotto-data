@@ -1,0 +1,40 @@
+# FCM만 수동 발송 (앱 종료 상태에서 깨우기 테스트용)
+name: Send FCM draw_data
+
+on:
+  workflow_dispatch:
+    inputs:
+      draw_no:
+        description: '회차 (예: 1236, 비워도 됨)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install google-auth
+        run: pip install google-auth
+
+      - name: Send FCM
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT_JSON 시크릿이 없습니다. docs/ops/FIREBASE_FCM_SETUP.md 참고"
+            exit 1
+          fi
+          python scripts/send_fcm_draw_data.py --draw-no "${{ inputs.draw_no }}"

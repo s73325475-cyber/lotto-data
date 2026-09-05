@@ -1,5 +1,8 @@
-# 모바일: GitHub 앱 → Actions → Add lotto draw → Run workflow
-# 입력한 회차를 엑셀에 추가하고, 기존과 같이 JSON 생성 후 Pages 배포까지 수행합니다.
+# 당첨 회차 추가 → JSON → GitHub Pages → FCM draw_data 깨우기
+#
+# 시크릿(lotto-data 저장소):
+#   FIREBASE_SERVICE_ACCOUNT_JSON  Firebase 서비스 계정 JSON 전체
+#   FIREBASE_PROJECT_ID            (선택) 예: lotto-wizard-xxxxx
 
 name: Add lotto draw
 
@@ -18,6 +21,11 @@ on:
         description: '보너스 (예: 15)'
         required: true
         type: string
+      skip_fcm:
+        description: 'FCM 깨우기 건너뛰기'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -44,7 +52,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install deps
-        run: pip install openpyxl
+        run: pip install openpyxl google-auth
 
       - name: Append draw (excel → json)
         run: |
@@ -60,10 +68,8 @@ jobs:
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # 따옴표 없이 glob — "*.xlsx"는 리터럴로 인식되어 엑셀이 빠질 수 있음
           git add manifest.json draws_v*.json
           git add ./*.xlsx || true
-          # Excel 임시 잠금 파일은 커밋하지 않음
           git reset -- './~$'*.xlsx 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No changes to commit"
@@ -86,3 +92,13 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: FCM draw_data ping
+        if: ${{ inputs.skip_fcm != true }}
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          python scripts/send_fcm_draw_data.py \
+            --draw-no "${{ inputs.draw_no }}" \
+            --allow-missing-secret
