@@ -44,7 +44,7 @@ def _access_token(sa: dict) -> str:
         from google.oauth2 import service_account
     except ImportError as e:
         raise SystemExit(
-            "google-auth 가 필요합니다: pip install google-auth"
+            "google-auth / requests 가 필요합니다: pip install google-auth requests"
         ) from e
 
     creds = service_account.Credentials.from_service_account_info(

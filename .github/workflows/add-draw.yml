@@ -52,7 +52,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install deps
-        run: pip install openpyxl google-auth
+        run: pip install openpyxl google-auth requests
 
       - name: Append draw (excel → json)
         run: |

@@ -26,7 +26,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install google-auth
-        run: pip install google-auth
+        run: pip install google-auth requests
 
       - name: Send FCM
         env:
