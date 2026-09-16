@@ -1,0 +1,64 @@
+# 동행복권 내부 API가 GitHub 러너(해외 IP)에서 되는지 확인
+name: Probe dhlottery API
+
+on:
+  workflow_dispatch:
+    inputs:
+      draw_no:
+        description: '조회 회차 (기본 1241)'
+        required: false
+        type: string
+        default: '1241'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch draw via internal API
+        env:
+          DRAW_NO: ${{ inputs.draw_no }}
+        run: |
+          set -euo pipefail
+          TS=$(date +%s%3N)
+          URL="https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do?srchLtEpsd=${DRAW_NO}&_=${TS}"
+          echo "GET $URL"
+          set +e
+          HTTP_CODE=$(curl -sS -o /tmp/dhlottery.json -w "%{http_code}" \
+            -H "User-Agent: Mozilla/5.0 (compatible; lotto-data-probe/1.0)" \
+            -H "X-Requested-With: XMLHttpRequest" \
+            -H "Referer: https://www.dhlottery.co.kr/" \
+            --connect-timeout 20 \
+            --max-time 40 \
+            "$URL")
+          CURL_EXIT=$?
+          set -e
+          echo "CURL_EXIT=$CURL_EXIT HTTP_CODE=$HTTP_CODE"
+          echo "---- body (first 800 chars) ----"
+          head -c 800 /tmp/dhlottery.json || true
+          echo
+          if [ "$CURL_EXIT" -ne 0 ] || [ "$HTTP_CODE" != "200" ]; then
+            echo "PROBE_FAIL http/curl"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, sys
+          raw = open("/tmp/dhlottery.json", "rb").read()
+          data = json.loads(raw.decode("utf-8"))
+          items = (data.get("data") or {}).get("list") or []
+          if not items:
+              print("NO_LIST", data)
+              sys.exit(2)
+          d = items[0]
+          nums = [d.get(f"tm{i}WnNo") for i in range(1, 7)]
+          bonus = d.get("bnsWnNo")
+          print(
+              f"OK draw={d.get('ltEpsd')} date={d.get('ltRflYmd')} "
+              f"win6={nums} bonus={bonus}"
+          )
+          if any(n is None for n in nums) or bonus is None:
+              sys.exit(3)
+          PY
+          echo "PROBE_SUCCESS"
