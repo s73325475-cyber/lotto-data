@@ -31,7 +31,7 @@
 - [x] GitHub Actions 러너에서 동일 API OK (Probe workflow)
 - [x] 로컬 확인용 앱 `check-app/` (조회·이력 UI)
 - [x] `auto-draw/scripts/auto_draw_run.py` — 5분 재시도·Summary·누적 이력
-- [x] `.github/workflows/auto-draw.yml` — **fetch only** (cron 토 20:50 KST, apply OFF)
+- [x] `.github/workflows/auto-draw.yml` — **fetch only** (cron 토 20:45 KST, apply OFF)
 - [x] Add / Fix 수동 워크플로 **유지** (미수정)
 - [ ] 주말 cron dry-run 관찰 2회
 - [ ] 안정화 후 apply(엑셀/Pages/FCM) 검토 — 별도 승인 후에만
@@ -40,7 +40,7 @@
 
 | 상황 | 동작 | Actions 결과 |
 |------|------|----------------|
-| cron 토 20:50 KST | job 기동 후 **5분 간격** 조회, 성공 시 중단 | — |
+| cron 토 20:45 KST | job 기동 후 **5분 간격** 조회, 성공 시 중단 | — |
 | 번호 확보 | Step Summary + `FETCH_HISTORY.md` 누적 커밋 | 성공 |
 | 미발표 ~23:00대 | skip | 성공 |
 | API/파싱 실패 | Issue + 수동 **Add/Fix** 안내 | 알림 job |
@@ -59,4 +59,4 @@
 | 2026-09-16 | Probe 성공 → 자동화 기술적 가능. 별도 폴더 `auto-draw`에서 진행 |
 | 2026-09-16 | 확인용 로컬 앱 `check-app` 추가 (GitHub 미연결) |
 | 2026-09-16 | **의도 확정**: Actions 자동 조회 + 미발표 재시도 + API 실패 시 개발자 알림 → 수동 Add lotto draw |
-| 2026-09-20 | **fetch-only 승격**: cron 토 20:50 + 5분 재시도 + Summary/누적이력. apply OFF. Add/Fix 미수정 |
+| 2026-09-20 | cron 시작 **20:45 KST**로 변경 (5분 간격 유지) |

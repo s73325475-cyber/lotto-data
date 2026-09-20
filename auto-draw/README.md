@@ -107,7 +107,7 @@ python check-app/server.py
 
 ## Auto draw (fetch only) — 운용 중 설계
 
-1. 토 **20:50 KST** cron → `latestDrawNo+1` 조회  
+1. 토 **20:45 KST** cron → `latestDrawNo+1` 조회  
 2. 미발표면 **5분마다** 재시도, 성공 시 중단 (~23:00까지)  
 3. Job Summary에 **가져온 번호** 표시 + `auto-draw/data/FETCH_HISTORY.md` 누적  
 4. API 실패 시 Issue → 모바일 **Add** / **Fix** 폴백  

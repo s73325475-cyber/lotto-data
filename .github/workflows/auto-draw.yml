@@ -6,15 +6,15 @@
 # - 성공 시 auto-draw/data 조회 이력만 커밋 (검증용)
 #
 # 동작:
-# - 토 20:50 KST cron 기동 → 5분 간격 재조회 → 번호 확보 시 중단
+# - 토 20:45 KST cron 기동 → 5분 간격 재조회 → 번호 확보 시 중단
 # - Job Summary에 가져온 번호 표시 + FETCH_HISTORY.md 누적
 
 name: Auto draw (fetch only)
 
 on:
   schedule:
-    # Saturday 20:50 KST = 11:50 UTC
-    - cron: "50 11 * * 6"
+    # Saturday 20:45 KST = 11:45 UTC
+    - cron: "45 11 * * 6"
   workflow_dispatch:
     inputs:
       interval_minutes:
@@ -23,10 +23,10 @@ on:
         type: string
         default: "5"
       max_attempts:
-        description: "최대 시도 (5분×26 ≈ 20:50~23:00)"
+        description: "최대 시도 (5분×27 ≈ 20:45~23:00)"
         required: false
         type: string
-        default: "26"
+        default: "27"
       once:
         description: "true면 1회만 조회 (디버그)"
         required: false
