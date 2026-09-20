@@ -64,7 +64,7 @@ jobs:
         id: run
         env:
           INTERVAL: ${{ inputs.interval_minutes || '5' }}
-          MAX_ATTEMPTS: ${{ inputs.max_attempts || '26' }}
+          MAX_ATTEMPTS: ${{ inputs.max_attempts || '27' }}
           ONCE: ${{ inputs.once || false }}
         run: |
           set -euo pipefail
