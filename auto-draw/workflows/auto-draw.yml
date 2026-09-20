@@ -1,0 +1,179 @@
+# DRAFT ONLY — 이 파일은 auto-draw 실험용 초안입니다.
+# 프로덕션 경로 `.github/workflows/` 에 복사·커밋하지 마세요.
+# 기존 `add-draw.yml`(모바일 수동 입력)은 절대 수정하지 않습니다.
+#
+# 의도:
+#   1) GitHub Actions가 동행복권 조회
+#   2) 미발표면 일정 간격 재조회 후, 그래도 없으면 skip(성공)
+#   3) API 장애면 Issue로 개발자 알림 → 수동 Add lotto draw 폴백
+#   4) apply_commit=false(기본) 이면 add_draw / Pages / FCM 호출 안 함
+
+name: Auto draw (DRAFT — not installed)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_commit:
+        description: "true일 때만 add_draw→Pages→FCM (기본 false=조회만)"
+        required: false
+        type: boolean
+        default: false
+      max_attempts:
+        description: "미발표 시 재시도 횟수"
+        required: false
+        type: string
+        default: "4"
+      retry_minutes:
+        description: "재시도 간격(분)"
+        required: false
+        type: string
+        default: "15"
+  # 설치 시에만 활성화할 cron 예시 (UTC). KST 토 20:50/21:10/21:40/22:30 ≈
+  # schedule:
+  #   - cron: "50 11 * * 6"
+  #   - cron: "10 12 * * 6"
+  #   - cron: "40 12 * * 6"
+  #   - cron: "30 13 * * 6"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: auto-draw-draft
+  cancel-in-progress: false
+
+jobs:
+  fetch-with-retry:
+    runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.loop.outputs.outcome }}
+      draw_no: ${{ steps.loop.outputs.draw_no }}
+      numbers: ${{ steps.loop.outputs.numbers }}
+      bonus: ${{ steps.loop.outputs.bonus }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch target draw with retries
+        id: loop
+        env:
+          MAX_ATTEMPTS: ${{ inputs.max_attempts || '4' }}
+          RETRY_MINUTES: ${{ inputs.retry_minutes || '15' }}
+        run: |
+          set -euo pipefail
+          # 초안: 스크립트는 아직 repo 루트 scripts/에 없음.
+          # 설치 전엔 auto-draw/scripts/fetch_draw.py 를 복사해 실험하거나,
+          # 로컬에서만 검증하세요.
+          SCRIPT="auto-draw/scripts/fetch_draw.py"
+          if [ ! -f "$SCRIPT" ]; then
+            echo "DRAFT script missing at $SCRIPT — abort without touching add-draw"
+            echo "outcome=draft_missing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ATTEMPT=1
+          OUTCOME="not_published"
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            echo "=== attempt $ATTEMPT / $MAX_ATTEMPTS ==="
+            set +e
+            python "$SCRIPT" --manifest manifest.json --json-out /tmp/draw.json
+            CODE=$?
+            set -e
+            echo "exit=$CODE"
+            cat /tmp/draw.json || true
+
+            if [ "$CODE" -eq 0 ] && python -c "import json; d=json.load(open('/tmp/draw.json')); assert d.get('ok')"; then
+              python <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          d = json.load(open("/tmp/draw.json"))["draw"]
+          print(f"outcome=ready")
+          print(f"draw_no={d['drawNo']}")
+          print(f"numbers={d['numbers']}")
+          print(f"bonus={d['bonus']}")
+          PY
+              exit 0
+            fi
+
+            if [ "$CODE" -eq 3 ]; then
+              echo "outcome=api_error" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            # 2 = 미발표 → 재시도
+            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+              echo "Not published yet. Sleep ${RETRY_MINUTES}m ..."
+              sleep $(( RETRY_MINUTES * 60 ))
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          echo "outcome=not_published" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when already latest / not published
+        if: steps.loop.outputs.outcome == 'not_published'
+        run: |
+          echo "No new draw yet — success skip (red X 방지)"
+          exit 0
+
+  # --- 아래 job 들은 설치 + apply_commit=true 일 때만 의미가 있음 ---
+  # 수동 add-draw.yml 을 수정하지 않고, 동일 스크립트(add_draw.py)를 "호출만" 하는 별도 job.
+  notify-developer:
+    needs: fetch-with-retry
+    if: needs.fetch-with-retry.outputs.outcome == 'api_error'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open / update failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '[auto-draw] 동행복권 조회 실패 — 수동 Add lotto draw 필요';
+            const body = [
+              '자동 조회가 API 오류로 실패했습니다.',
+              '',
+              '## 폴백 (모바일 GitHub)',
+              '1. Actions → **Add lotto draw** 실행',
+              '2. draw_no / numbers / bonus 수동 입력 후 Run',
+              '',
+              '기존 수동 워크플로는 변경되지 않았습니다.',
+              '',
+              `run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n');
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'auto-draw-failure',
+              per_page: 5,
+            });
+            if (issues.data.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['auto-draw-failure'],
+              });
+            }
+
+  # apply 는 기본 비활성. 초안이 .github 에 올라간 뒤에도
+  # workflow_dispatch apply_commit=true 를 켠 경우에만 동작하도록 설계.
+  # 이 DRAFT 파일 상태에서는 job 전체를 주석/조건으로 막아 둡니다.
+  # apply-and-deploy:
+  #   needs: fetch-with-retry
+  #   if: needs.fetch-with-retry.outputs.outcome == 'ready' && inputs.apply_commit == true
+  #   ... existing add_draw.py + pages + fcm steps (add-draw.yml 을 복사·수정하지 말 것) ...

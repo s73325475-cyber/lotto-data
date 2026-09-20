@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>로또 확인</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=Noto+Sans+KR:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="phone">
+      <header class="brand-block">
+        <p class="brand">로또 확인</p>
+        <nav class="tabs" role="tablist" aria-label="화면 전환">
+          <button
+            type="button"
+            class="tab is-active"
+            role="tab"
+            id="tabLatest"
+            aria-selected="true"
+            aria-controls="panelLatest"
+          >
+            이번 주
+          </button>
+          <button
+            type="button"
+            class="tab"
+            role="tab"
+            id="tabHistory"
+            aria-selected="false"
+            aria-controls="panelHistory"
+          >
+            당첨 이력
+          </button>
+        </nav>
+      </header>
+
+      <section
+        class="panel"
+        id="panelLatest"
+        role="tabpanel"
+        aria-labelledby="tabLatest"
+      >
+        <h1 class="headline">이번 주 당첨번호</h1>
+        <p class="sub" id="statusLine">토요일 20:45 이후 자동 조회</p>
+
+        <main class="stage" id="stage" aria-live="polite">
+          <div class="result-slot" id="balls" hidden></div>
+          <div class="meta" id="meta" hidden></div>
+          <div class="idle" id="idle">
+            <p class="idle-title">추첨 대기 중</p>
+            <p class="idle-desc">
+              매주 토요일 20:45(KST) 이후<br />동행복권에서 최신 회차를 불러옵니다.
+            </p>
+          </div>
+          <div class="error" id="error" hidden></div>
+        </main>
+
+        <footer class="actions">
+          <button type="button" class="cta" id="refreshBtn">다시 확인</button>
+          <button type="button" class="ghost" id="forceBtn">지금 조회 (테스트)</button>
+        </footer>
+      </section>
+
+      <section
+        class="panel"
+        id="panelHistory"
+        role="tabpanel"
+        aria-labelledby="tabHistory"
+        hidden
+      >
+        <h1 class="headline">당첨 이력</h1>
+        <p class="sub" id="historySub">조회한 회차가 여기에 쌓입니다</p>
+        <div class="history-list" id="historyList" aria-live="polite"></div>
+      </section>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

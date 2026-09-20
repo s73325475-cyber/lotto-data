@@ -1,0 +1,163 @@
+# Auto draw — 조회 전용 (apply OFF)
+#
+# 안전:
+# - Add lotto draw / Fix lotto draw 워크플로·스크립트를 수정·호출하지 않음
+# - 엑셀 / draws_v3 운영 반영 / Pages / FCM 없음
+# - 성공 시 auto-draw/data 조회 이력만 커밋 (검증용)
+#
+# 동작:
+# - 토 20:50 KST cron 기동 → 5분 간격 재조회 → 번호 확보 시 중단
+# - Job Summary에 가져온 번호 표시 + FETCH_HISTORY.md 누적
+
+name: Auto draw (fetch only)
+
+on:
+  schedule:
+    # Saturday 20:50 KST = 11:50 UTC
+    - cron: "50 11 * * 6"
+  workflow_dispatch:
+    inputs:
+      interval_minutes:
+        description: "재시도 간격(분)"
+        required: false
+        type: string
+        default: "5"
+      max_attempts:
+        description: "최대 시도 (5분×26 ≈ 20:50~23:00)"
+        required: false
+        type: string
+        default: "26"
+      once:
+        description: "true면 1회만 조회 (디버그)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+# pages 그룹과 분리 — 수동 Add/Fix 배포와 충돌 방지
+concurrency:
+  group: auto-draw-fetch
+  cancel-in-progress: false
+
+jobs:
+  fetch-only:
+    runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.run.outputs.outcome }}
+      draw_no: ${{ steps.run.outputs.draw_no }}
+      numbers: ${{ steps.run.outputs.numbers }}
+      bonus: ${{ steps.run.outputs.bonus }}
+      history_updated: ${{ steps.run.outputs.history_updated }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch with 5-minute retries
+        id: run
+        env:
+          INTERVAL: ${{ inputs.interval_minutes || '5' }}
+          MAX_ATTEMPTS: ${{ inputs.max_attempts || '26' }}
+          ONCE: ${{ inputs.once || false }}
+        run: |
+          set -euo pipefail
+          EXTRA=()
+          if [ "${ONCE}" = "true" ]; then
+            EXTRA+=(--once)
+          fi
+          set +e
+          python auto-draw/scripts/auto_draw_run.py \
+            --manifest manifest.json \
+            --history auto-draw/data/fetch_history.json \
+            --history-md auto-draw/data/FETCH_HISTORY.md \
+            --interval-minutes "${INTERVAL}" \
+            --max-attempts "${MAX_ATTEMPTS}" \
+            "${EXTRA[@]}"
+          CODE=$?
+          set -e
+          echo "runner_exit=${CODE}"
+          # 0 = ready or not_published skip / 3 = api_error
+          if [ "$CODE" -eq 3 ]; then
+            echo "outcome=api_error" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$CODE" -ne 0 ]; then
+            echo "outcome=runner_error" >> "$GITHUB_OUTPUT"
+            exit "$CODE"
+          fi
+          # outputs already appended by python when GITHUB_OUTPUT set;
+          # ensure defaults if python skipped outputs
+          if ! grep -q '^outcome=' "$GITHUB_OUTPUT" 2>/dev/null; then
+            echo "outcome=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit fetch history (verification only)
+        if: steps.run.outputs.history_updated == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add auto-draw/data/fetch_history.json auto-draw/data/FETCH_HISTORY.md
+          if git diff --staged --quiet; then
+            echo "History unchanged"
+            exit 0
+          fi
+          DRAW="${{ steps.run.outputs.draw_no }}"
+          git commit -m "auto-draw: record fetch ${DRAW} (verification only)"
+          git push
+
+  notify-on-api-error:
+    needs: fetch-only
+    if: needs.fetch-only.outputs.outcome == 'api_error'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Notify developer (manual Add/Fix fallback)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '[auto-draw] 조회 실패 — 수동 Add lotto draw 필요';
+            const body = [
+              '## Auto draw 조회 실패 (apply OFF)',
+              '',
+              '동행복권 API 조회가 실패했습니다. **엑셀/Pages는 변경되지 않았습니다.**',
+              '',
+              '### 폴백 (모바일 GitHub)',
+              '1. Actions → **Add lotto draw** — 새 회차 입력',
+              '2. 이미 잘못된 회차가 있다면 → **Fix lotto draw** (`confirm`에 `FIX`)',
+              '',
+              '수동 Add/Fix 워크플로는 그대로입니다.',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n');
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 30,
+            });
+            const existing = issues.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+            }
