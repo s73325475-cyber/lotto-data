@@ -111,7 +111,17 @@ jobs:
           fi
           DRAW="${{ steps.run.outputs.draw_no }}"
           git commit -m "auto-draw: record fetch ${DRAW} (verification only)"
-          git push
+          # Add/Fix 가 같은 시각에 main 을 밀어올리면 non-FF 가 날 수 있음 → rebase 후 재시도
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              echo "History pushed (attempt $i)"
+              exit 0
+            fi
+            echo "Push conflict, retry $i ..."
+            sleep 5
+          done
+          echo "::error::history commit push failed after retries (Add/Fix 데이터는 영향 없음)"
+          exit 1
 
   notify-on-api-error:
     needs: fetch-only
