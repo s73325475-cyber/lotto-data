@@ -11,5 +11,6 @@
 - 시안 이미지: Cursor assets `lotto-check-app-mockup.png`
 - 당첨 이력 탭 + `check-app/data/history.json` 누적 저장 (회차 upsert)
 - 최종 의도 문서화: Actions 자동조회 + 재시도 + API실패 Issue → 수동 Add lotto draw
-- **제약**: `.github` / `add-draw.yml` 미수정. DRAFT만 `auto-draw/scripts`, `auto-draw/workflows`
+- 합의: 2~3주 fetch-only 관찰 → 문제 없으면 cron 결과 apply(Add 경로) 연계. Fix/Add 유지
+- cron 20:45 KST + history push rebase 보강 (230ebf6)
 

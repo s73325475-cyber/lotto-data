@@ -7,26 +7,37 @@
 #
 # 동작:
 # - 토 20:45 KST cron 기동 → 5분 간격 재조회 → 번호 확보 시 중단
-# - Job Summary에 가져온 번호 표시 + FETCH_HISTORY.md 누적
+# - 목표 회차는 날짜로 계산 (Add가 먼저 실행돼도 같은 회차를 조회)
+# - GitHub 예약 실행은 누락될 수 있어 백업 cron을 둠. 이미 기록된 회차면 즉시 종료
+# - Job Summary에 가져온 번호 + 수동 입력 대조 표시, FETCH_HISTORY.md 누적
 
 name: Auto draw (fetch only)
 
 on:
   schedule:
-    # Saturday 20:45 KST = 11:45 UTC
-    - cron: "45 11 * * 6"
+    # 모두 UTC. 정각 부하를 피해 :47 사용
+    - cron: "45 11 * * 6"   # 토 20:45 KST (주 실행)
+    - cron: "47 12 * * 6"   # 토 21:47 KST (백업)
+    - cron: "47 13 * * 6"   # 토 22:47 KST (백업, 추첨 지연 대비)
+    - cron: "47 14 * * 6"   # 토 23:47 KST (백업)
+    - cron: "17 0 * * 0"    # 일 09:17 KST (최종 보정)
   workflow_dispatch:
     inputs:
+      draw_no:
+        description: "조회 회차 (비우면 최근 토요일 회차)"
+        required: false
+        type: string
+        default: ""
       interval_minutes:
         description: "재시도 간격(분)"
         required: false
         type: string
         default: "5"
       max_attempts:
-        description: "최대 시도 (5분×27 ≈ 20:45~23:00)"
+        description: "최대 시도 (5분×48 ≈ 4시간)"
         required: false
         type: string
-        default: "27"
+        default: "48"
       once:
         description: "true면 1회만 조회 (디버그)"
         required: false
@@ -63,8 +74,9 @@ jobs:
       - name: Fetch with 5-minute retries
         id: run
         env:
+          DRAW_NO: ${{ inputs.draw_no || '' }}
           INTERVAL: ${{ inputs.interval_minutes || '5' }}
-          MAX_ATTEMPTS: ${{ inputs.max_attempts || '27' }}
+          MAX_ATTEMPTS: ${{ inputs.max_attempts || '48' }}
           ONCE: ${{ inputs.once || false }}
         run: |
           set -euo pipefail
@@ -72,9 +84,12 @@ jobs:
           if [ "${ONCE}" = "true" ]; then
             EXTRA+=(--once)
           fi
+          if [ -n "${DRAW_NO}" ]; then
+            EXTRA+=(--draw-no "${DRAW_NO}")
+          fi
           set +e
           python auto-draw/scripts/auto_draw_run.py \
-            --manifest manifest.json \
+            --draws draws_v3.json \
             --history auto-draw/data/fetch_history.json \
             --history-md auto-draw/data/FETCH_HISTORY.md \
             --interval-minutes "${INTERVAL}" \

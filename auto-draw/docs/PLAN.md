@@ -33,8 +33,22 @@
 - [x] `auto-draw/scripts/auto_draw_run.py` — 5분 재시도·Summary·누적 이력
 - [x] `.github/workflows/auto-draw.yml` — **fetch only** (cron 토 20:45 KST, apply OFF)
 - [x] Add / Fix 수동 워크플로 **유지** (미수정)
-- [ ] 주말 cron dry-run 관찰 2회
-- [ ] 안정화 후 apply(엑셀/Pages/FCM) 검토 — 별도 승인 후에만
+- [ ] 주말 cron dry-run 관찰 **2~3주**
+- [ ] 안정화 후 **apply 연계** (조회 성공 → add_draw → Pages → FCM) — **별도 승인 후**
+- [ ] apply 켜도 **Fix lotto draw / Add lotto draw 유지** (오탐·누락 폴백)
+
+## 다음 단계 (2~3주 후 목표)
+
+```text
+토 20:45 cron
+  → 5분 재시도로 번호 확보
+  → (검증 기간 종료 후) add_draw.py → Pages → FCM 자동 반영
+  → 번호 오류 시 모바일 Fix lotto draw (confirm=FIX)
+  → API 실패 시 Issue → 수동 Add lotto draw
+```
+
+- apply 켜기 전: 지금처럼 **fetch only** + `FETCH_HISTORY.md`로 번호 대조  
+- apply 켠 뒤에도 Fix/Add는 **삭제·비활성 금지**
 
 ## 재시도·알림 정책 (운용)
 
@@ -60,3 +74,6 @@
 | 2026-09-16 | 확인용 로컬 앱 `check-app` 추가 (GitHub 미연결) |
 | 2026-09-16 | **의도 확정**: Actions 자동 조회 + 미발표 재시도 + API 실패 시 개발자 알림 → 수동 Add lotto draw |
 | 2026-09-20 | cron 시작 **20:45 KST**로 변경 (5분 간격 유지) |
+| 2026-09-20 | **합의**: 2~3주 fetch-only 관찰 후 apply(모바일 연계). Fix/Add는 apply 후에도 유지 |
+| 2026-09-26 | 1243 추첨 22:30 지연. 20:45 예약 실행이 GitHub에서 생성되지 않음(누락) + 수동 Add 후엔 manifest+1(1244)을 찾는 구조라 이력 0건 |
+| 2026-09-26 | 보완: 목표 회차를 날짜로 계산, 백업 cron(21:47/22:47/23:47/일 09:17), 이미 기록 시 skip, 최대 4시간, 수동 입력 대조 컬럼 추가 |
