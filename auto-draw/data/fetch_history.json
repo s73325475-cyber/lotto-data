@@ -1,5 +1,23 @@
 {
-  "updatedAt": null,
+  "updatedAt": "2026-09-26T23:45:00+09:00",
   "note": "auto-draw 조회 검증용 누적 이력 (Pages/FCM/엑셀과 무관)",
-  "items": []
+  "items": [
+    {
+      "drawNo": 1243,
+      "win6": [
+        9,
+        18,
+        24,
+        38,
+        43,
+        44
+      ],
+      "bonus": 35,
+      "date": "2026.09.26",
+      "fetchedAt": "2026-09-26T23:45:00+09:00",
+      "attempts": 1,
+      "manualMatch": "일치",
+      "source": "dhlottery"
+    }
+  ]
 }
