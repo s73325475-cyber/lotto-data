@@ -3,24 +3,28 @@
 # 안전:
 # - Add lotto draw / Fix lotto draw 워크플로·스크립트를 수정·호출하지 않음
 # - 엑셀 / draws_v3 운영 반영 / Pages / FCM 없음
-# - 성공 시 auto-draw/data 조회 이력만 커밋 (검증용)
+# - 성공 시 auto-draw/data 조회 이력만 커밋 (Add/Fix 실행 중이면 끝날 때까지 대기 후 커밋)
 #
-# 동작:
-# - 토 20:45 KST cron 기동 → 5분 간격 재조회 → 번호 확보 시 중단
-# - 목표 회차는 날짜로 계산 (Add가 먼저 실행돼도 같은 회차를 조회)
-# - GitHub 예약 실행은 누락될 수 있어 백업 cron을 둠. 이미 기록된 회차면 즉시 종료
-# - Job Summary에 가져온 번호 + 수동 입력 대조 표시, FETCH_HISTORY.md 누적
+# 동작 (GitHub 예약 실행은 수 시간 지연·누락될 수 있음):
+# - 토요일 06:23 KST부터 여러 시각에 시작을 시도. 하나라도 시작되면 충분
+# - 시작된 실행은 20:35 KST까지 대기 → 5분 간격 조회 → 성공 시 기록 후 종료
+# - 실행 시간(5.5시간)이 다 되면 workflow_dispatch로 자신을 즉시 다시 호출(이어달리기)
+#   (GITHUB_TOKEN의 workflow_dispatch는 예약 대기열을 거치지 않고 바로 실행됨)
+# - 마감은 일요일 12:00 KST. 시작·성공·실패는 이슈 "[auto-draw] 실행 이력"에 기록
 
 name: Auto draw (fetch only)
 
 on:
   schedule:
-    # 모두 UTC. 정각 부하를 피해 :47 사용
-    - cron: "45 11 * * 6"   # 토 20:45 KST (주 실행)
-    - cron: "47 12 * * 6"   # 토 21:47 KST (백업)
-    - cron: "47 13 * * 6"   # 토 22:47 KST (백업, 추첨 지연 대비)
-    - cron: "47 14 * * 6"   # 토 23:47 KST (백업)
-    - cron: "17 0 * * 0"    # 일 09:17 KST (최종 보정)
+    # 모두 UTC. 정각 부하를 피한 분 사용
+    - cron: "23 21 * * 5"   # 토 06:23 KST
+    - cron: "23 1 * * 6"    # 토 10:23 KST
+    - cron: "23 5 * * 6"    # 토 14:23 KST
+    - cron: "23 8 * * 6"    # 토 17:23 KST
+    - cron: "23 10 * * 6"   # 토 19:23 KST
+    - cron: "41 11 * * 6"   # 토 20:41 KST
+    - cron: "47 13 * * 6"   # 토 22:47 KST
+    - cron: "17 0 * * 0"    # 일 09:17 KST (마감 전 보정)
   workflow_dispatch:
     inputs:
       draw_no:
@@ -28,40 +32,48 @@ on:
         required: false
         type: string
         default: ""
-      interval_minutes:
-        description: "재시도 간격(분)"
-        required: false
-        type: string
-        default: "5"
-      max_attempts:
-        description: "최대 시도 (5분×48 ≈ 4시간)"
-        required: false
-        type: string
-        default: "48"
       once:
-        description: "true면 1회만 조회 (디버그)"
+        description: "true면 대기·재시도 없이 1회만 조회 (디버그)"
         required: false
         type: boolean
         default: false
+      relay_hop:
+        description: "이어달리기 순번 (자동 사용, 수동 실행 시 비워 두기)"
+        required: false
+        type: string
+        default: "0"
+      budget_minutes:
+        description: "실행 1회당 사용 시간(분). 비우면 330. 이어달리기 테스트 때만 짧게"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
   issues: write
+  actions: write
 
-# pages 그룹과 분리 — 수동 Add/Fix 배포와 충돌 방지
+# pages 그룹과 분리 — 수동 Add/Fix 배포와 서로 취소하지 않음
 concurrency:
   group: auto-draw-fetch
   cancel-in-progress: false
 
+env:
+  LOG_ISSUE_TITLE: "[auto-draw] 실행 이력"
+  MAX_RELAY_HOPS: "12"
+
 jobs:
   fetch-only:
     runs-on: ubuntu-latest
-    outputs:
-      outcome: ${{ steps.run.outputs.outcome }}
-      draw_no: ${{ steps.run.outputs.draw_no }}
-      numbers: ${{ steps.run.outputs.numbers }}
-      bonus: ${{ steps.run.outputs.bonus }}
-      history_updated: ${{ steps.run.outputs.history_updated }}
+    timeout-minutes: 350
+    env:
+      TRIGGER_EVENT: ${{ github.event_name }}
+      TRIGGER_SCHEDULE: ${{ github.event.schedule }}
+      RELAY_HOP: ${{ inputs.relay_hop || '0' }}
+      DRAW_NO: ${{ inputs.draw_no || '' }}
+      ONCE: ${{ inputs.once || false }}
+      BUDGET: ${{ inputs.budget_minutes || '' }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,118 +83,141 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Fetch with 5-minute retries
-        id: run
-        env:
-          DRAW_NO: ${{ inputs.draw_no || '' }}
-          INTERVAL: ${{ inputs.interval_minutes || '5' }}
-          MAX_ATTEMPTS: ${{ inputs.max_attempts || '48' }}
-          ONCE: ${{ inputs.once || false }}
+      - name: Check target
+        id: check
         run: |
-          set -euo pipefail
-          EXTRA=()
-          if [ "${ONCE}" = "true" ]; then
-            EXTRA+=(--once)
-          fi
-          if [ -n "${DRAW_NO}" ]; then
-            EXTRA+=(--draw-no "${DRAW_NO}")
-          fi
-          set +e
-          python auto-draw/scripts/auto_draw_run.py \
-            --draws draws_v3.json \
-            --history auto-draw/data/fetch_history.json \
-            --history-md auto-draw/data/FETCH_HISTORY.md \
-            --interval-minutes "${INTERVAL}" \
-            --max-attempts "${MAX_ATTEMPTS}" \
-            "${EXTRA[@]}"
-          CODE=$?
-          set -e
-          echo "runner_exit=${CODE}"
-          # 0 = ready or not_published skip / 3 = api_error
-          if [ "$CODE" -eq 3 ]; then
-            echo "outcome=api_error" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$CODE" -ne 0 ]; then
-            echo "outcome=runner_error" >> "$GITHUB_OUTPUT"
-            exit "$CODE"
-          fi
-          # outputs already appended by python when GITHUB_OUTPUT set;
-          # ensure defaults if python skipped outputs
-          if ! grep -q '^outcome=' "$GITHUB_OUTPUT" 2>/dev/null; then
-            echo "outcome=unknown" >> "$GITHUB_OUTPUT"
-          fi
+          ARGS=(--check-only)
+          if [ -n "${DRAW_NO}" ]; then ARGS+=(--draw-no "${DRAW_NO}"); fi
+          python auto-draw/scripts/auto_draw_run.py "${ARGS[@]}"
 
-      - name: Commit fetch history (verification only)
+      - name: Log start (first run of the week only)
+        if: steps.check.outputs.recorded == 'false' && env.ONCE != 'true' && env.RELAY_HOP == '0'
+        uses: actions/github-script@v7
+        env:
+          TARGET: ${{ steps.check.outputs.target }}
+          TRIGGER: ${{ steps.check.outputs.trigger }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const title = process.env.LOG_ISSUE_TITLE;
+            const marker = `<!-- auto-draw-start-${process.env.TARGET} -->`;
+            const { data: open } = await github.rest.issues.listForRepo({ owner, repo, state: 'open', per_page: 50 });
+            let issue = open.find(i => i.title === title);
+            if (!issue) {
+              issue = (await github.rest.issues.create({ owner, repo, title,
+                body: '자동 조회(Auto draw)의 시작·성공·실패 기록입니다. 번호 누적 표는 `auto-draw/data/FETCH_HISTORY.md`.' })).data;
+            }
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: issue.number, per_page: 100 });
+            if (comments.some(c => c.body.includes(marker))) { core.info('start already logged'); return; }
+            const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+            await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: [
+              marker,
+              `**[시작]** ${process.env.TARGET}회 자동 조회 대기 시작 — ${now} KST`,
+              `- 시작 경로: ${process.env.TRIGGER}`,
+              '- 20:35부터 5분 간격으로 조회하고, 성공하면 이곳에 번호를 남깁니다.',
+              `- 실행: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+            ].join('\n') });
+
+      - name: Fetch (wait → 5-minute polling)
+        id: run
+        if: steps.check.outputs.recorded == 'false' || env.DRAW_NO != ''
+        run: |
+          ARGS=(--history auto-draw/data/fetch_history.json --history-md auto-draw/data/FETCH_HISTORY.md)
+          if [ "${ONCE}" = "true" ]; then ARGS+=(--once); fi
+          if [ -n "${DRAW_NO}" ]; then ARGS+=(--draw-no "${DRAW_NO}"); fi
+          if [ -n "${BUDGET}" ]; then ARGS+=(--budget-minutes "${BUDGET}"); fi
+          python auto-draw/scripts/auto_draw_run.py "${ARGS[@]}"
+
+      - name: Commit fetch history (after Add/Fix finish)
         if: steps.run.outputs.history_updated == 'true'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add auto-draw/data/fetch_history.json auto-draw/data/FETCH_HISTORY.md
-          if git diff --staged --quiet; then
-            echo "History unchanged"
-            exit 0
-          fi
-          DRAW="${{ steps.run.outputs.draw_no }}"
-          git commit -m "auto-draw: record fetch ${DRAW} (verification only)"
-          # Add/Fix 가 같은 시각에 main 을 밀어올리면 non-FF 가 날 수 있음 → rebase 후 재시도
-          for i in 1 2 3; do
-            if git pull --rebase origin main && git push origin HEAD:main; then
-              echo "History pushed (attempt $i)"
-              exit 0
-            fi
-            echo "Push conflict, retry $i ..."
-            sleep 5
+          if git diff --staged --quiet; then echo "History unchanged"; exit 0; fi
+          git commit -m "auto-draw: record fetch ${{ steps.run.outputs.draw_no }} (verification only)"
+          # Add/Fix 가 main 에 push 하기 전에 끼어들지 않도록, 진행 중이면 끝날 때까지 대기
+          for i in $(seq 1 60); do
+            BUSY=0
+            for wf in add-draw.yml fix-draw.yml; do
+              N=$(gh run list --workflow "$wf" --limit 5 --json status --jq '[.[] | select(.status != "completed")] | length')
+              BUSY=$((BUSY + N))
+            done
+            [ "$BUSY" -eq 0 ] && break
+            echo "Add/Fix running ($BUSY) — wait 10s"; sleep 10
           done
-          echo "::error::history commit push failed after retries (Add/Fix 데이터는 영향 없음)"
-          exit 1
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then echo "History pushed"; exit 0; fi
+            echo "Push conflict, retry $i"; sleep 5
+          done
+          echo "::error::history push failed (Add/Fix 데이터는 영향 없음)"; exit 1
 
-  notify-on-api-error:
-    needs: fetch-only
-    if: needs.fetch-only.outputs.outcome == 'api_error'
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
-    steps:
-      - name: Notify developer (manual Add/Fix fallback)
+      - name: Relay (dispatch next run immediately)
+        id: relay
+        if: steps.run.outputs.relay == 'true' && fromJSON(env.RELAY_HOP) < fromJSON(env.MAX_RELAY_HOPS)
+        run: |
+          NEXT=$((RELAY_HOP + 1))
+          ARGS=(-f relay_hop="$NEXT")
+          if [ -n "${DRAW_NO}" ]; then ARGS+=(-f draw_no="${DRAW_NO}"); fi
+          if [ -n "${BUDGET}" ]; then ARGS+=(-f budget_minutes="${BUDGET}"); fi
+          gh workflow run auto-draw.yml --ref main "${ARGS[@]}"
+          echo "Dispatched relay hop $NEXT"
+
+      - name: Log result
+        if: >-
+          always() && (steps.run.outputs.outcome == 'ready' ||
+          steps.run.outputs.outcome == 'api_error' ||
+          steps.run.outputs.outcome == 'deadline_missed' ||
+          (steps.run.outputs.relay == 'true' && steps.relay.outcome != 'success') ||
+          steps.check.outcome == 'failure' ||
+          steps.run.outcome == 'failure' || steps.run.outcome == 'cancelled')
         uses: actions/github-script@v7
+        env:
+          OUTCOME: ${{ steps.run.outputs.outcome }}
+          RUN_STEP: ${{ steps.run.outcome }}
+          RELAY: ${{ steps.run.outputs.relay }}
+          TARGET: ${{ steps.check.outputs.target }}
+          DRAW_NO_OUT: ${{ steps.run.outputs.draw_no }}
+          DRAW_DATE: ${{ steps.run.outputs.draw_date }}
+          NUMBERS: ${{ steps.run.outputs.numbers }}
+          BONUS: ${{ steps.run.outputs.bonus }}
+          MANUAL: ${{ steps.run.outputs.manual_match }}
+          ATTEMPTS: ${{ steps.run.outputs.attempts }}
+          ERROR: ${{ steps.run.outputs.error }}
+          TRIGGER: ${{ steps.check.outputs.trigger }}
         with:
           script: |
-            const title = '[auto-draw] 조회 실패 — 수동 Add lotto draw 필요';
-            const body = [
-              '## Auto draw 조회 실패 (apply OFF)',
-              '',
-              '동행복권 API 조회가 실패했습니다. **엑셀/Pages는 변경되지 않았습니다.**',
-              '',
-              '### 폴백 (모바일 GitHub)',
-              '1. Actions → **Add lotto draw** — 새 회차 입력',
-              '2. 이미 잘못된 회차가 있다면 → **Fix lotto draw** (`confirm`에 `FIX`)',
-              '',
-              '수동 Add/Fix 워크플로는 그대로입니다.',
-              '',
-              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-            ].join('\n');
-
-            const { data: issues } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              per_page: 30,
-            });
-            const existing = issues.find(i => i.title === title);
-            if (existing) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: existing.number,
-                body,
-              });
+            const { owner, repo } = context.repo;
+            const e = process.env;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+            const fallback = '급하면 Actions → **Add lotto draw** 로 직접 입력하세요. 잘못 들어간 번호는 **Fix lotto draw** (confirm=FIX).';
+            let lines;
+            if (e.OUTCOME === 'ready') {
+              const manualNote = e.MANUAL === '불일치' ? ' — **수동 입력과 다릅니다. Fix lotto draw 로 확인하세요.**'
+                : e.MANUAL === '미입력' ? ' — 아직 Add 전입니다.' : '';
+              lines = [`**[성공]** ${e.DRAW_NO_OUT}회 (${e.DRAW_DATE}) — ${now} KST`,
+                `- 번호: **${e.NUMBERS}** + 보너스 **${e.BONUS}**`,
+                `- 수동 입력 대조: **${e.MANUAL}**${manualNote}`,
+                `- 시도 ${e.ATTEMPTS}회 · 시작 경로: ${e.TRIGGER}`];
+            } else if (e.OUTCOME === 'api_error') {
+              lines = [`**[오류]** ${e.TARGET}회 조회 중 동행복권 API 오류가 1시간째 계속됩니다 — ${now} KST`,
+                `- 마지막 오류: \`${e.ERROR}\``, '- 자동 조회는 마감(일 12:00)까지 계속 시도합니다.', `- ${fallback}`];
+            } else if (e.OUTCOME === 'deadline_missed') {
+              lines = [`**[실패]** ${e.TARGET}회를 마감(일 12:00 KST)까지 가져오지 못했습니다 — ${now} KST`,
+                `- 마지막 상태: \`${e.ERROR}\``, `- ${fallback}`];
+            } else if (e.RELAY === 'true') {
+              lines = [`**[실패]** ${e.TARGET}회 이어달리기를 더 이상 진행할 수 없습니다 (한도 ${e.MAX_RELAY_HOPS}회 또는 호출 실패) — ${now} KST`, `- ${fallback}`];
             } else {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title,
-                body,
-              });
+              lines = [`**[실패]** ${e.TARGET || '(대상 확인 전)'}회 조회 실행이 비정상 종료되었습니다 (${e.RUN_STEP || 'check 실패'}) — ${now} KST`, `- ${fallback}`];
             }
+            lines.push(`- 실행: ${runUrl}`);
+            if (e.OUTCOME !== 'ready' || e.MANUAL === '불일치') lines.push(`\n@${owner}`);
+            const { data: open } = await github.rest.issues.listForRepo({ owner, repo, state: 'open', per_page: 50 });
+            let issue = open.find(i => i.title === e.LOG_ISSUE_TITLE);
+            if (!issue) {
+              issue = (await github.rest.issues.create({ owner, repo, title: e.LOG_ISSUE_TITLE,
+                body: '자동 조회(Auto draw)의 시작·성공·실패 기록입니다. 번호 누적 표는 `auto-draw/data/FETCH_HISTORY.md`.' })).data;
+            }
+            await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: lines.join('\n') });
