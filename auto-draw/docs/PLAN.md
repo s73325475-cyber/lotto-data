@@ -33,22 +33,29 @@
 - [x] `auto-draw/scripts/auto_draw_run.py` — 5분 재시도·Summary·누적 이력
 - [x] `.github/workflows/auto-draw.yml` — **fetch only** (cron 토 20:45 KST, apply OFF)
 - [x] Add / Fix 수동 워크플로 **유지** (미수정)
-- [ ] 주말 cron dry-run 관찰 **2~3주**
-- [ ] 안정화 후 **apply 연계** (조회 성공 → add_draw → Pages → FCM) — **별도 승인 후**
-- [ ] apply 켜도 **Fix lotto draw / Add lotto draw 유지** (오탐·누락 폴백)
+- [x] 주말 cron dry-run 관찰 (1243·1244·1245 — 2026-10-16 확인)
+- [x] **apply 연계 구현** (조회 성공 → add_draw → Pages → FCM) — `workflow_dispatch` + `apply=true` 만; **cron 기본 OFF**
+- [x] apply 켜도 **Fix lotto draw / Add lotto draw 유지** (워크플로 미수정)
+- [x] apply 가이드·Agent 프롬프트·앱 체크 문서 (`docs/APPLY_GUIDE.md`, `docs/AGENT_PROMPT_APPLY.md`, lotto_wizard `docs/ops/AUTO_DRAW_APPLY_APP_CHECK.md`)
+- [ ] cron 에서 apply 기본 ON (수동 시험 안정 후 **별도 승인**)
 
-## 다음 단계 (2~3주 후 목표)
+## 다음 단계 (apply)
+
+상세: **[APPLY_GUIDE.md](./APPLY_GUIDE.md)**  
+구현 시 Agent에 붙일 문장: **[AGENT_PROMPT_APPLY.md](./AGENT_PROMPT_APPLY.md)**  
+앱 측: `C:\lotto_wizard\docs\ops\AUTO_DRAW_APPLY_APP_CHECK.md` (**대개 코드 변경 불필요**)
 
 ```text
-토 20:45 cron
-  → 5분 재시도로 번호 확보
-  → (검증 기간 종료 후) add_draw.py → Pages → FCM 자동 반영
+토 cron / relay
+  → 번호 확보 + FETCH_HISTORY
+  → (apply ON) add_draw.py → Pages → FCM
   → 번호 오류 시 모바일 Fix lotto draw (confirm=FIX)
   → API 실패 시 Issue → 수동 Add lotto draw
 ```
 
-- apply 켜기 전: 지금처럼 **fetch only** + `FETCH_HISTORY.md`로 번호 대조  
-- apply 켠 뒤에도 Fix/Add는 **삭제·비활성 금지**
+- apply 켜기 전: **fetch only** + `FETCH_HISTORY.md`로 번호 대조 (1243~1245까지 완료)  
+- apply 켠 뒤에도 Fix/Add는 **삭제·비활성 금지**  
+- 첫 apply 는 `workflow_dispatch` + `apply=true` 로만 시험 (cron 기본 OFF)
 
 ## 재시도·알림 정책 (운용)
 
@@ -79,3 +86,6 @@
 | 2026-09-26 | 보완: 목표 회차를 날짜로 계산, 백업 cron(21:47/22:47/23:47/일 09:17), 이미 기록 시 skip, 최대 4시간, 수동 입력 대조 컬럼 추가 |
 | 2026-10-03 | 재발: 20:41·21:47 예약 실행 0건. 9/26 예약 실행 실측 지연 18분~308분. 정시 시작 의존 구조가 근본 원인 |
 | 2026-10-03 | 구조 변경: 토 06:23부터 예약 8개 → 하나라도 시작되면 20:35까지 대기 후 조회, 5.5시간마다 workflow_dispatch로 자기 재호출(이어달리기), 마감 일 12:00. 시작/성공/실패를 이슈 "[auto-draw] 실행 이력"에 기록. 이력 커밋 전 Add/Fix 실행 중이면 대기 |
+| 2026-10-10 | 1245 자동 조회 성공 (4,5,25,28,32,42 +12). 직후 수동 Add와 번호 동일. fetch history 커밋됨 |
+| 2026-10-16 | apply 연계 가이드·Agent 프롬프트·앱 체크 문서 추가. 앱은 FCM 계약 동일 → 코드 변경 보통 불필요 |
+| 2026-10-16 | `auto-draw.yml`에 apply job 추가. dispatch `apply=true` 만 Pages/FCM. cron은 조회만. Add/Fix yml 미수정 |

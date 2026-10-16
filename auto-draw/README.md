@@ -107,14 +107,24 @@ python check-app/server.py
 
 ## Auto draw (fetch only) — 운용 중 설계
 
-1. 토 **20:45 KST** cron → `latestDrawNo+1` 조회  
-2. 미발표면 **5분마다** 재시도, 성공 시 중단 (~23:00까지)  
-3. Job Summary에 **가져온 번호** 표시 + `auto-draw/data/FETCH_HISTORY.md` 누적  
-4. API 실패 시 Issue → 모바일 **Add** / **Fix** 폴백  
-5. apply(엑셀/Pages/FCM)는 **아직 없음**
+1. 토 여러 cron + relay → 목표 회차 조회 (20:35 KST 이후 5분 간격)  
+2. 성공 시 Job Summary + `FETCH_HISTORY.md` 누적 + 이슈 **[auto-draw] 실행 이력**  
+3. API 실패·마감 미발표 시 Issue → 모바일 **Add** / **Fix** 폴백  
+4. apply(엑셀/Pages/FCM): **구현됨**, 다만 **cron은 OFF**. 수동 Run에서 `apply=true` 일 때만 반영
 
 프로덕션 파일:
 
-- `.github/workflows/auto-draw.yml` (신규, Add/Fix와 분리)  
+- `.github/workflows/auto-draw.yml` (fetch + optional apply, Add/Fix와 분리)  
 - `auto-draw/scripts/auto_draw_run.py`  
 - `auto-draw/data/FETCH_HISTORY.md` / `fetch_history.json`
+
+### 자동 푸시(apply) 사용
+
+1. 가이드: **[docs/APPLY_GUIDE.md](docs/APPLY_GUIDE.md)**  
+2. Actions → **Auto draw** → Run workflow  
+   - `once=true` (이미 발표된 회차 시험)  
+   - `apply=true`  
+   - 이미 Pages에 있으면 apply **스킵**  
+3. 실패 시 폴백: 모바일 **Add lotto draw** / **Fix lotto draw** (기존과 동일)  
+4. 앱 확인: `C:\lotto_wizard\docs\ops\AUTO_DRAW_APPLY_APP_CHECK.md` (대개 수정 불필요)  
+5. cron 자동 apply ON은 시험 후 별도 결정

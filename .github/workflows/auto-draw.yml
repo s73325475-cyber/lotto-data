@@ -1,18 +1,18 @@
-# Auto draw — 조회 전용 (apply OFF)
+# Auto draw — 조회 + (선택) apply
 #
 # 안전:
-# - Add lotto draw / Fix lotto draw 워크플로·스크립트를 수정·호출하지 않음
-# - 엑셀 / draws_v3 운영 반영 / Pages / FCM 없음
-# - 성공 시 auto-draw/data 조회 이력만 커밋 (Add/Fix 실행 중이면 끝날 때까지 대기 후 커밋)
+# - Add lotto draw / Fix lotto draw 워크플로 파일은 수정하지 않음 (폴백 유지)
+# - cron(schedule) 에서는 apply 절대 안 함. workflow_dispatch 에서 apply=true 일 때만
+# - apply 는 기존 scripts/add_draw.py → Pages → FCM 을 "호출만" (Add와 동일 경로)
+# - 조회 성공 시 auto-draw/data 이력 커밋 (Add/Fix 실행 중이면 대기)
 #
 # 동작 (GitHub 예약 실행은 수 시간 지연·누락될 수 있음):
 # - 토요일 06:23 KST부터 여러 시각에 시작을 시도. 하나라도 시작되면 충분
 # - 시작된 실행은 20:35 KST까지 대기 → 5분 간격 조회 → 성공 시 기록 후 종료
 # - 실행 시간(5.5시간)이 다 되면 workflow_dispatch로 자신을 즉시 다시 호출(이어달리기)
-#   (GITHUB_TOKEN의 workflow_dispatch는 예약 대기열을 거치지 않고 바로 실행됨)
 # - 마감은 일요일 12:00 KST. 시작·성공·실패는 이슈 "[auto-draw] 실행 이력"에 기록
 
-name: Auto draw (fetch only)
+name: Auto draw
 
 on:
   schedule:
@@ -37,6 +37,16 @@ on:
         required: false
         type: boolean
         default: false
+      apply:
+        description: "true면 조회 성공 시 add_draw→Pages→FCM (cron에서는 무시·항상 OFF)"
+        required: false
+        type: boolean
+        default: false
+      skip_fcm:
+        description: "apply 시 FCM 건너뛰기 (시험용)"
+        required: false
+        type: boolean
+        default: false
       relay_hop:
         description: "이어달리기 순번 (자동 사용, 수동 실행 시 비워 두기)"
         required: false
@@ -52,8 +62,10 @@ permissions:
   contents: write
   issues: write
   actions: write
+  pages: write
+  id-token: write
 
-# pages 그룹과 분리 — 수동 Add/Fix 배포와 서로 취소하지 않음
+# 조회·대기는 pages 와 분리 — 장시간 폴링이 Add/Fix 배포를 막지 않음
 concurrency:
   group: auto-draw-fetch
   cancel-in-progress: false
@@ -72,8 +84,22 @@ jobs:
       RELAY_HOP: ${{ inputs.relay_hop || '0' }}
       DRAW_NO: ${{ inputs.draw_no || '' }}
       ONCE: ${{ inputs.once || false }}
+      # schedule 에서는 inputs 비어 있음 → false. dispatch 에서 apply=true 일 때만
+      APPLY_INPUT: ${{ inputs.apply == true }}
+      SKIP_FCM: ${{ inputs.skip_fcm == true }}
       BUDGET: ${{ inputs.budget_minutes || '' }}
       GH_TOKEN: ${{ github.token }}
+    outputs:
+      outcome: ${{ steps.gate.outputs.outcome }}
+      draw_no: ${{ steps.gate.outputs.draw_no }}
+      draw_date: ${{ steps.gate.outputs.draw_date }}
+      numbers: ${{ steps.gate.outputs.numbers }}
+      bonus: ${{ steps.gate.outputs.bonus }}
+      manual_match: ${{ steps.gate.outputs.manual_match }}
+      apply_gate: ${{ steps.gate.outputs.apply_gate }}
+      apply_wanted: ${{ steps.gate.outputs.apply_wanted }}
+      skip_fcm: ${{ steps.gate.outputs.skip_fcm }}
+      trigger: ${{ steps.gate.outputs.trigger }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,6 +154,7 @@ jobs:
           if [ -n "${BUDGET}" ]; then ARGS+=(--budget-minutes "${BUDGET}"); fi
           python auto-draw/scripts/auto_draw_run.py "${ARGS[@]}"
 
+      # 이력(검증용)을 먼저 push — apply job 은 needs 로 이후 실행되어 Pages 커밋과 파일 충돌을 줄임
       - name: Commit fetch history (after Add/Fix finish)
         if: steps.run.outputs.history_updated == 'true'
         run: |
@@ -137,7 +164,6 @@ jobs:
           git add auto-draw/data/fetch_history.json auto-draw/data/FETCH_HISTORY.md
           if git diff --staged --quiet; then echo "History unchanged"; exit 0; fi
           git commit -m "auto-draw: record fetch ${{ steps.run.outputs.draw_no }} (verification only)"
-          # Add/Fix 가 main 에 push 하기 전에 끼어들지 않도록, 진행 중이면 끝날 때까지 대기
           for i in $(seq 1 60); do
             BUSY=0
             for wf in add-draw.yml fix-draw.yml; do
@@ -153,6 +179,46 @@ jobs:
           done
           echo "::error::history push failed (Add/Fix 데이터는 영향 없음)"; exit 1
 
+      - name: Decide apply gate
+        id: gate
+        run: |
+          set -euo pipefail
+          OUTCOME="${{ steps.run.outputs.outcome }}"
+          DRAW="${{ steps.run.outputs.draw_no }}"
+          DATE="${{ steps.run.outputs.draw_date }}"
+          NUMS="${{ steps.run.outputs.numbers }}"
+          BONUS="${{ steps.run.outputs.bonus }}"
+          MANUAL="${{ steps.run.outputs.manual_match }}"
+          TRIG="${{ steps.check.outputs.trigger }}"
+          if [ -z "$OUTCOME" ]; then OUTCOME="already_recorded"; fi
+          if [ -z "$TRIG" ]; then TRIG="${{ steps.run.outputs.trigger }}"; fi
+
+          APPLY_WANTED=false
+          if [ "${TRIGGER_EVENT}" = "workflow_dispatch" ] && [ "${APPLY_INPUT}" = "true" ]; then
+            APPLY_WANTED=true
+          fi
+
+          APPLY_GATE=false
+          if [ "$APPLY_WANTED" = "true" ] && [ "$OUTCOME" = "ready" ] \
+            && [ -n "$DRAW" ] && [ -n "$NUMS" ] && [ -n "$BONUS" ] \
+            && [ "$MANUAL" != "불일치" ]; then
+            APPLY_GATE=true
+          fi
+
+          {
+            echo "outcome=$OUTCOME"
+            echo "draw_no=$DRAW"
+            echo "draw_date=$DATE"
+            echo "numbers=$NUMS"
+            echo "bonus=$BONUS"
+            echo "manual_match=$MANUAL"
+            echo "apply_wanted=$APPLY_WANTED"
+            echo "apply_gate=$APPLY_GATE"
+            echo "skip_fcm=${SKIP_FCM}"
+            echo "trigger=$TRIG"
+          } >> "$GITHUB_OUTPUT"
+          echo "APPLY_WANTED=$APPLY_WANTED APPLY_GATE=$APPLY_GATE outcome=$OUTCOME manual=$MANUAL"
+
       - name: Relay (dispatch next run immediately)
         id: relay
         if: steps.run.outputs.relay == 'true' && fromJSON(env.RELAY_HOP) < fromJSON(env.MAX_RELAY_HOPS)
@@ -161,6 +227,9 @@ jobs:
           ARGS=(-f relay_hop="$NEXT")
           if [ -n "${DRAW_NO}" ]; then ARGS+=(-f draw_no="${DRAW_NO}"); fi
           if [ -n "${BUDGET}" ]; then ARGS+=(-f budget_minutes="${BUDGET}"); fi
+          # 이어달리기에도 apply 의도 유지 (cron 경로는 APPLY_INPUT 이 원래 false)
+          if [ "${APPLY_INPUT}" = "true" ]; then ARGS+=(-f apply=true); fi
+          if [ "${SKIP_FCM}" = "true" ]; then ARGS+=(-f skip_fcm=true); fi
           gh workflow run auto-draw.yml --ref main "${ARGS[@]}"
           echo "Dispatched relay hop $NEXT"
 
@@ -171,7 +240,8 @@ jobs:
           steps.run.outputs.outcome == 'deadline_missed' ||
           (steps.run.outputs.relay == 'true' && steps.relay.outcome != 'success') ||
           steps.check.outcome == 'failure' ||
-          steps.run.outcome == 'failure' || steps.run.outcome == 'cancelled')
+          steps.run.outcome == 'failure' || steps.run.outcome == 'cancelled' ||
+          (steps.gate.outputs.apply_wanted == 'true' && steps.gate.outputs.apply_gate == 'false' && steps.run.outputs.outcome == 'ready'))
         uses: actions/github-script@v7
         env:
           OUTCOME: ${{ steps.run.outputs.outcome }}
@@ -186,6 +256,8 @@ jobs:
           ATTEMPTS: ${{ steps.run.outputs.attempts }}
           ERROR: ${{ steps.run.outputs.error }}
           TRIGGER: ${{ steps.check.outputs.trigger }}
+          APPLY_WANTED: ${{ steps.gate.outputs.apply_wanted }}
+          APPLY_GATE: ${{ steps.gate.outputs.apply_gate }}
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -201,6 +273,15 @@ jobs:
                 `- 번호: **${e.NUMBERS}** + 보너스 **${e.BONUS}**`,
                 `- 수동 입력 대조: **${e.MANUAL}**${manualNote}`,
                 `- 시도 ${e.ATTEMPTS}회 · 시작 경로: ${e.TRIGGER}`];
+              if (e.APPLY_WANTED === 'true' && e.APPLY_GATE === 'true') {
+                lines.push('- apply: **진행 예정** (이어서 Pages/FCM)');
+              } else if (e.APPLY_WANTED === 'true' && e.MANUAL === '불일치') {
+                lines.push('- apply: **중단** (수동 입력과 불일치)');
+              } else if (e.APPLY_WANTED === 'true') {
+                lines.push('- apply: **스킵** (조건 미충족)');
+              } else {
+                lines.push('- apply: OFF (조회만)');
+              }
             } else if (e.OUTCOME === 'api_error') {
               lines = [`**[오류]** ${e.TARGET}회 조회 중 동행복권 API 오류가 1시간째 계속됩니다 — ${now} KST`,
                 `- 마지막 오류: \`${e.ERROR}\``, '- 자동 조회는 마감(일 12:00)까지 계속 시도합니다.', `- ${fallback}`];
@@ -214,6 +295,153 @@ jobs:
             }
             lines.push(`- 실행: ${runUrl}`);
             if (e.OUTCOME !== 'ready' || e.MANUAL === '불일치') lines.push(`\n@${owner}`);
+            const { data: open } = await github.rest.issues.listForRepo({ owner, repo, state: 'open', per_page: 50 });
+            let issue = open.find(i => i.title === e.LOG_ISSUE_TITLE);
+            if (!issue) {
+              issue = (await github.rest.issues.create({ owner, repo, title: e.LOG_ISSUE_TITLE,
+                body: '자동 조회(Auto draw)의 시작·성공·실패 기록입니다. 번호 누적 표는 `auto-draw/data/FETCH_HISTORY.md`.' })).data;
+            }
+            await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: lines.join('\n') });
+
+  # Add와 동일: add_draw.py → commit → Pages → FCM. concurrency pages 로 Add/Fix 와 직렬화
+  apply:
+    name: apply (add_draw → Pages → FCM)
+    needs: fetch-only
+    if: needs.fetch-only.outputs.apply_gate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      DRAW_NO: ${{ needs.fetch-only.outputs.draw_no }}
+      NUMBERS: ${{ needs.fetch-only.outputs.numbers }}
+      BONUS: ${{ needs.fetch-only.outputs.bonus }}
+      SKIP_FCM: ${{ needs.fetch-only.outputs.skip_fcm }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install openpyxl google-auth requests
+
+      - name: Skip if already on Pages/manifest
+        id: precheck
+        run: |
+          set -euo pipefail
+          LATEST=$(python -c "import json; print(int(json.load(open('manifest.json',encoding='utf-8'))['latestDrawNo']))")
+          echo "manifest.latestDrawNo=$LATEST target=$DRAW_NO"
+          if [ "$LATEST" -ge "$DRAW_NO" ]; then
+            echo "result=skipped_already" >> "$GITHUB_OUTPUT"
+            echo "Already applied (latest=$LATEST >= $DRAW_NO)"
+          else
+            echo "result=will_apply" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Append draw (excel → json)
+        if: steps.precheck.outputs.result == 'will_apply'
+        run: |
+          python scripts/add_draw.py \
+            --draw-no "${DRAW_NO}" \
+            --numbers "${NUMBERS}" \
+            --bonus "${BONUS}" \
+            --repo-root . \
+            --version 3
+
+      - name: Commit data files
+        if: steps.precheck.outputs.result == 'will_apply'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json draws_v*.json
+          git add ./*.xlsx || true
+          git reset -- './~$'*.xlsx 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 1
+          fi
+          git commit -m "data: add draw ${DRAW_NO}"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              echo "Data pushed"
+              exit 0
+            fi
+            echo "Push conflict, retry $i"; sleep 5
+          done
+          echo "::error::apply data push failed"
+          exit 1
+
+      - name: Prepare Pages artifact
+        if: steps.precheck.outputs.result == 'will_apply'
+        run: |
+          mkdir -p dist
+          cp "draws_v3.json" "manifest.json" dist/
+          touch dist/.nojekyll
+
+      - name: Upload Pages artifact
+        if: steps.precheck.outputs.result == 'will_apply'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        if: steps.precheck.outputs.result == 'will_apply'
+        uses: actions/deploy-pages@v4
+
+      - name: FCM draw_data ping
+        if: steps.precheck.outputs.result == 'will_apply' && env.SKIP_FCM != 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          python scripts/send_fcm_draw_data.py \
+            --draw-no "${DRAW_NO}" \
+            --allow-missing-secret
+
+      - name: Log apply result
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          DRAW_NO: ${{ needs.fetch-only.outputs.draw_no }}
+          NUMBERS: ${{ needs.fetch-only.outputs.numbers }}
+          BONUS: ${{ needs.fetch-only.outputs.bonus }}
+          PRECHECK: ${{ steps.precheck.outputs.result }}
+          APPLY_CONCLUSION: ${{ job.status }}
+          SKIP_FCM: ${{ needs.fetch-only.outputs.skip_fcm }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const e = process.env;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+            const fallback = '급하면 Actions → **Add lotto draw** 로 직접 입력하세요. 잘못 들어간 번호는 **Fix lotto draw** (confirm=FIX).';
+            let lines;
+            if (e.PRECHECK === 'skipped_already') {
+              lines = [`**[apply 스킵]** ${e.DRAW_NO}회 — 이미 manifest에 반영됨 — ${now} KST`,
+                `- 번호(조회): **${e.NUMBERS}** + 보너스 **${e.BONUS}**`];
+            } else if (e.APPLY_CONCLUSION === 'success') {
+              const fcm = e.SKIP_FCM === 'true' ? 'FCM 건너뜀' : 'FCM 시도함';
+              lines = [`**[apply 성공]** ${e.DRAW_NO}회 — Pages 반영 — ${now} KST`,
+                `- 번호: **${e.NUMBERS}** + 보너스 **${e.BONUS}**`,
+                `- ${fcm}`];
+            } else {
+              lines = [`**[apply 실패]** ${e.DRAW_NO}회 — ${now} KST`,
+                `- job status: \`${e.APPLY_CONCLUSION}\``,
+                `- ${fallback}`,
+                `\n@${owner}`];
+            }
+            lines.push(`- 실행: ${runUrl}`);
             const { data: open } = await github.rest.issues.listForRepo({ owner, repo, state: 'open', per_page: 50 });
             let issue = open.find(i => i.title === e.LOG_ISSUE_TITLE);
             if (!issue) {

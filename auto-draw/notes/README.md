@@ -14,3 +14,10 @@
 - 합의: 2~3주 fetch-only 관찰 → 문제 없으면 cron 결과 apply(Add 경로) 연계. Fix/Add 유지
 - cron 20:45 KST + history push rebase 보강 (230ebf6)
 
+## 2026-10-16
+
+- 이력 재확인: 1243·1244 일치, 1245 자동 조회 성공(번호=수동 Add와 동일). 로컬은 remote 대비 behind였음 → pull
+- apply 연계 문서 추가: `docs/APPLY_GUIDE.md`, `docs/AGENT_PROMPT_APPLY.md`
+- 앱 확인 가이드: `C:\lotto_wizard\docs\ops\AUTO_DRAW_APPLY_APP_CHECK.md` (FCM 계약 동일 → 대개 코드 변경 불필요)
+- apply 구현: `.github/workflows/auto-draw.yml` — dispatch `apply=true` 만 Pages/FCM. cron OFF. Add/Fix 미수정
+
