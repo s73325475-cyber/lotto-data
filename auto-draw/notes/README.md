@@ -20,4 +20,5 @@
 - apply 연계 문서 추가: `docs/APPLY_GUIDE.md`, `docs/AGENT_PROMPT_APPLY.md`
 - 앱 확인 가이드: `C:\lotto_wizard\docs\ops\AUTO_DRAW_APPLY_APP_CHECK.md` (FCM 계약 동일 → 대개 코드 변경 불필요)
 - apply 구현: `.github/workflows/auto-draw.yml` — dispatch `apply=true` 만 Pages/FCM. cron OFF. Add/Fix 미수정
+- cron apply ON: schedule·수동 기본 모두 조회 성공 시 Pages/FCM 자동 반영
 

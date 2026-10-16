@@ -1,8 +1,7 @@
 # Auto draw → 자동 푸시(apply) 연계 가이드
 
-> **현재(2026-10-16):** apply **구현됨**. cron은 조회만, `workflow_dispatch` + `apply=true` 일 때만 Pages/FCM.  
-> **목표(다음):** 시험 안정 후 cron apply ON 검토.  
-> **원칙:** 기존 **Add lotto draw** / **Fix lotto draw** 는 삭제·수정하지 않는다 (폴백 유지).
+> **현재(2026-10-16):** apply **완전 자동 ON** (cron 포함). 조회 성공 → add_draw → Pages → FCM.  
+> **폴백:** 실패 시 모바일 **Add lotto draw** / **Fix lotto draw** (워크플로 유지).
 
 관련 문서:
 
@@ -51,11 +50,9 @@ apply를 켜도 **페이로드 계약이 같으면 앱 수정은 보통 0건**�
 ### B. apply 구현
 
 - [x] `auto-draw.yml` apply job (add_draw → Pages → FCM)
-- [x] cron apply OFF / dispatch `apply` 기본 false
+- [x] **cron apply ON** / dispatch `apply` 기본 true
 - [x] 불일치 시 apply 금지, 이미 latest면 스킵
 - [x] `skip_fcm` 입력 (시험용)
-- [ ] 수동 `apply=true` 1회 E2E (이미 반영 회차는 스킵 확인)
-- [ ] cron apply 기본 ON (별도 승인)
 
 ### C. 인프라·폴백
 

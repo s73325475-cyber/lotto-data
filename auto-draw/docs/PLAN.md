@@ -34,10 +34,10 @@
 - [x] `.github/workflows/auto-draw.yml` — **fetch only** (cron 토 20:45 KST, apply OFF)
 - [x] Add / Fix 수동 워크플로 **유지** (미수정)
 - [x] 주말 cron dry-run 관찰 (1243·1244·1245 — 2026-10-16 확인)
-- [x] **apply 연계 구현** (조회 성공 → add_draw → Pages → FCM) — `workflow_dispatch` + `apply=true` 만; **cron 기본 OFF**
+- [x] **apply 연계 구현** (조회 성공 → add_draw → Pages → FCM)
 - [x] apply 켜도 **Fix lotto draw / Add lotto draw 유지** (워크플로 미수정)
 - [x] apply 가이드·Agent 프롬프트·앱 체크 문서 (`docs/APPLY_GUIDE.md`, `docs/AGENT_PROMPT_APPLY.md`, lotto_wizard `docs/ops/AUTO_DRAW_APPLY_APP_CHECK.md`)
-- [ ] cron 에서 apply 기본 ON (수동 시험 안정 후 **별도 승인**)
+- [x] **cron apply ON** (2026-10-16) — 조회 성공 시 자동 Pages/FCM. 실패 시 수동 Add/Fix 폴백
 
 ## 다음 단계 (apply)
 
@@ -89,3 +89,4 @@
 | 2026-10-10 | 1245 자동 조회 성공 (4,5,25,28,32,42 +12). 직후 수동 Add와 번호 동일. fetch history 커밋됨 |
 | 2026-10-16 | apply 연계 가이드·Agent 프롬프트·앱 체크 문서 추가. 앱은 FCM 계약 동일 → 코드 변경 보통 불필요 |
 | 2026-10-16 | `auto-draw.yml`에 apply job 추가. dispatch `apply=true` 만 Pages/FCM. cron은 조회만. Add/Fix yml 미수정 |
+| 2026-10-16 | cron apply ON. schedule·수동 기본 모두 조회 성공 시 add_draw→Pages→FCM |

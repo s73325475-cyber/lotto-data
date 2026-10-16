@@ -1,8 +1,9 @@
-# Auto draw — 조회 + (선택) apply
+# Auto draw — 조회 + apply (Pages/FCM)
 #
 # 안전:
 # - Add lotto draw / Fix lotto draw 워크플로 파일은 수정하지 않음 (폴백 유지)
-# - cron(schedule) 에서는 apply 절대 안 함. workflow_dispatch 에서 apply=true 일 때만
+# - cron(schedule) 및 수동 기본: 조회 성공 시 apply ON (add_draw→Pages→FCM)
+# - 수동 Run 에서 apply=false 로 조회만 가능. skip_fcm=true 로 FCM만 생략 가능
 # - apply 는 기존 scripts/add_draw.py → Pages → FCM 을 "호출만" (Add와 동일 경로)
 # - 조회 성공 시 auto-draw/data 이력 커밋 (Add/Fix 실행 중이면 대기)
 #
@@ -38,10 +39,10 @@ on:
         type: boolean
         default: false
       apply:
-        description: "true면 조회 성공 시 add_draw→Pages→FCM (cron에서는 무시·항상 OFF)"
+        description: "조회 성공 시 add_draw→Pages→FCM (기본 true. cron은 항상 ON)"
         required: false
         type: boolean
-        default: false
+        default: true
       skip_fcm:
         description: "apply 시 FCM 건너뛰기 (시험용)"
         required: false
@@ -84,8 +85,8 @@ jobs:
       RELAY_HOP: ${{ inputs.relay_hop || '0' }}
       DRAW_NO: ${{ inputs.draw_no || '' }}
       ONCE: ${{ inputs.once || false }}
-      # schedule 에서는 inputs 비어 있음 → false. dispatch 에서 apply=true 일 때만
-      APPLY_INPUT: ${{ inputs.apply == true }}
+      # cron(schedule)=항상 apply. 수동은 inputs.apply (기본 true)
+      APPLY_INPUT: ${{ github.event_name == 'schedule' || inputs.apply == true }}
       SKIP_FCM: ${{ inputs.skip_fcm == true }}
       BUDGET: ${{ inputs.budget_minutes || '' }}
       GH_TOKEN: ${{ github.token }}
@@ -194,7 +195,7 @@ jobs:
           if [ -z "$TRIG" ]; then TRIG="${{ steps.run.outputs.trigger }}"; fi
 
           APPLY_WANTED=false
-          if [ "${TRIGGER_EVENT}" = "workflow_dispatch" ] && [ "${APPLY_INPUT}" = "true" ]; then
+          if [ "${APPLY_INPUT}" = "true" ]; then
             APPLY_WANTED=true
           fi
 
@@ -227,8 +228,9 @@ jobs:
           ARGS=(-f relay_hop="$NEXT")
           if [ -n "${DRAW_NO}" ]; then ARGS+=(-f draw_no="${DRAW_NO}"); fi
           if [ -n "${BUDGET}" ]; then ARGS+=(-f budget_minutes="${BUDGET}"); fi
-          # 이어달리기에도 apply 의도 유지 (cron 경로는 APPLY_INPUT 이 원래 false)
+          # 이어달리기에도 apply 의도 유지 (cron·apply ON 이면 true 전달)
           if [ "${APPLY_INPUT}" = "true" ]; then ARGS+=(-f apply=true); fi
+          if [ "${APPLY_INPUT}" != "true" ]; then ARGS+=(-f apply=false); fi
           if [ "${SKIP_FCM}" = "true" ]; then ARGS+=(-f skip_fcm=true); fi
           gh workflow run auto-draw.yml --ref main "${ARGS[@]}"
           echo "Dispatched relay hop $NEXT"
