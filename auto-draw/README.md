@@ -107,7 +107,7 @@ python check-app/server.py
 
 ## Auto draw (fetch only) — 운용 중 설계
 
-1. 토 여러 cron + relay → 목표 회차 조회 (20:35 KST 이후 5분 간격)  
+1. 토 여러 cron + relay → 목표 회차 조회 (20:35~20:50은 1분, 이후 5분 간격)  
 2. 성공 시 Job Summary + `FETCH_HISTORY.md` 누적 + 이슈 **[auto-draw] 실행 이력**  
 3. API 실패·마감 미발표 시 Issue → 모바일 **Add** / **Fix** 폴백  
 4. apply(엑셀/Pages/FCM): **ON** — cron·수동 기본 모두 조회 성공 시 자동 반영 (실패 시 Add/Fix 폴백)

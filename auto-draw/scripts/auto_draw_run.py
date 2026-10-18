@@ -2,9 +2,10 @@
 """Auto-draw 조회 전용 러너 (엑셀/Pages/FCM/add_draw/fix_draw 호출 금지).
 
 GitHub 예약 실행은 수 시간 지연되거나 누락될 수 있으므로 "정시 시작"에 의존하지 않는다.
-토요일 이른 시각부터 여러 번 시작을 시도하고, 시작된 실행은
+추첨 시각 전후 cron으로 시작되면
   - 추첨 전이면 20:35(KST)까지 대기
-  - 이후 5분 간격 조회, 성공 시 이력 기록
+  - 20:35~20:50은 1분 간격(발표 직후 구간)
+  - 20:50 이후는 5분 간격, 성공 시 이력 기록
   - 실행 시간 예산(기본 5.5시간)이 다 되면 relay=true 를 내보내 워크플로가 자신을 다시 호출
 하는 방식으로 성공 또는 마감(일요일 12:00 KST)까지 이어간다.
 
@@ -35,8 +36,11 @@ API = "https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do"
 KST = timezone(timedelta(hours=9))
 FIRST_DRAW_DATE = date(2002, 12, 7)  # 1회 추첨일 (토)
 POLL_START = dtime(20, 35)  # 추첨 방송 이후부터 조회
+POLL_DENSE_END = dtime(20, 50)  # 이 시각까지는 짧은 간격
+DENSE_INTERVAL_SECONDS = 60  # 20:35~20:50 — 1분
+NORMAL_INTERVAL_SECONDS = 5 * 60  # 20:50 이후 — 5분
 DEADLINE_DAYS, DEADLINE_TIME = 1, dtime(12, 0)  # 추첨 다음날 12:00 KST
-ERROR_ALERT_COUNT = 12  # 5분 간격 기준 약 1시간 연속 오류
+ERROR_ALERT_SECONDS = 60 * 60  # 연속 오류가 약 1시간 지속되면 알림
 
 
 def now_kst() -> datetime:
@@ -253,7 +257,18 @@ def main() -> int:
     p.add_argument("--draws", type=Path, default=Path("draws_v3.json"))
     p.add_argument("--history", type=Path, default=Path("auto-draw/data/fetch_history.json"))
     p.add_argument("--history-md", type=Path, default=Path("auto-draw/data/FETCH_HISTORY.md"))
-    p.add_argument("--interval-minutes", type=int, default=5)
+    p.add_argument(
+        "--interval-minutes",
+        type=int,
+        default=NORMAL_INTERVAL_SECONDS // 60,
+        help="20:50 이후 조회 간격(분). 기본 5",
+    )
+    p.add_argument(
+        "--dense-interval-seconds",
+        type=int,
+        default=DENSE_INTERVAL_SECONDS,
+        help="20:35~20:50 조회 간격(초). 기본 60",
+    )
     p.add_argument("--budget-minutes", type=int, default=330, help="이 실행의 최대 사용 시간 (job 제한 6시간 미만)")
     p.add_argument("--once", action="store_true", help="대기·재시도 없이 1회만 조회 (디버그)")
     p.add_argument("--check-only", action="store_true", help="목표 회차·기록 여부만 출력")
@@ -261,10 +276,12 @@ def main() -> int:
 
     started = time.monotonic()
     budget = max(5, args.budget_minutes) * 60
-    interval = max(1, args.interval_minutes) * 60
+    dense_interval = max(15, args.dense_interval_seconds)
+    normal_interval = max(60, args.interval_minutes * 60)
     target = args.draw_no or expected_draw_no()
     sat = draw_saturday(target)
     poll_start = datetime.combine(sat, POLL_START, KST)
+    dense_end = datetime.combine(sat, POLL_DENSE_END, KST)
     deadline = datetime.combine(sat + timedelta(days=DEADLINE_DAYS), DEADLINE_TIME, KST)
     recorded = any(int(it.get("drawNo", -1)) == target for it in load_history(args.history))
     trigger, hop = trigger_info()
@@ -280,7 +297,9 @@ def main() -> int:
                 "",
                 f"- 대상 회차: **{target}** ({sat.isoformat()} 추첨)",
                 f"- 시작: {now_kst().strftime('%m/%d %H:%M')} KST · {trigger}",
-                f"- 조회 시작 {POLL_START.strftime('%H:%M')} / 마감 {deadline.strftime('%m/%d %H:%M')} KST",
+                f"- 조회 시작 {POLL_START.strftime('%H:%M')} "
+                f"(~{POLL_DENSE_END.strftime('%H:%M')} {dense_interval}초 간격 → "
+                f"이후 {normal_interval // 60}분) / 마감 {deadline.strftime('%m/%d %H:%M')} KST",
                 "- Add/Fix/Pages/FCM 을 호출하지 않습니다.",
                 "",
             ]
@@ -295,8 +314,14 @@ def main() -> int:
     def remaining() -> float:
         return budget - (time.monotonic() - started)
 
+    def interval_for(now: datetime) -> int:
+        if now < dense_end:
+            return dense_interval
+        return normal_interval
+
     attempt = 0
     consecutive_errors = 0
+    error_streak_started: datetime | None = None
     last_error = ""
     while True:
         now = now_kst()
@@ -316,9 +341,12 @@ def main() -> int:
         try:
             draw = fetch_draw(target)
             consecutive_errors = 0
+            error_streak_started = None
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             draw = None
             consecutive_errors += 1
+            if error_streak_started is None:
+                error_streak_started = now_kst()
             last_error = str(exc)
             print(f"ERROR fetch: {exc}", file=sys.stderr)
 
@@ -359,17 +387,30 @@ def main() -> int:
             write_outputs(outcome="deadline_missed", target=target, relay="false", history_updated="false", error=last_error or "not_published", attempts=attempt, trigger=trigger)
             return 0
 
-        if consecutive_errors >= ERROR_ALERT_COUNT:
-            write_step_summary(f"### API 오류 지속\n\n{consecutive_errors}회 연속 오류: `{last_error}` → 알림 후 이어달리기\n")
+        if (
+            error_streak_started is not None
+            and (now_kst() - error_streak_started).total_seconds() >= ERROR_ALERT_SECONDS
+        ):
+            write_step_summary(
+                f"### API 오류 지속\n\n"
+                f"{consecutive_errors}회 연속 오류(약 "
+                f"{int((now_kst() - error_streak_started).total_seconds() // 60)}분): "
+                f"`{last_error}` → 알림 후 이어달리기\n"
+            )
             write_outputs(outcome="api_error", target=target, relay="true", history_updated="false", error=last_error, attempts=attempt, trigger=trigger)
             return 0
 
+        interval = interval_for(now_kst())
         if remaining() < interval + 60:
             write_step_summary(f"- 조회 {attempt}회, 아직 미발표 · 실행 시간 소진 → 이어달리기\n")
             write_outputs(outcome="relay_polling", target=target, relay="true", history_updated="false", attempts=attempt, trigger=trigger)
             return 0
 
-        print(f"{'error' if consecutive_errors else 'not published'}; sleep {interval // 60}m")
+        phase = "dense" if now_kst() < dense_end else "normal"
+        print(
+            f"{'error' if consecutive_errors else 'not published'}; "
+            f"sleep {interval}s ({phase})"
+        )
         time.sleep(interval)
 
 

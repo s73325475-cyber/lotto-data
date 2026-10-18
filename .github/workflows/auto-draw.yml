@@ -9,7 +9,7 @@
 #
 # 동작 (GitHub 예약 실행은 수 시간 지연·누락될 수 있음):
 # - 추첨 시각(약 20:35 KST) 전후로만 시작. 아침부터 하루 종일 돌리지 않음
-# - 시작된 실행은 20:35 KST까지 대기 → 5분 간격 조회 → 성공 시 이력·apply 후 종료
+# - 시작된 실행은 20:35 KST까지 대기 → 20:35~20:50은 1분 간격 → 이후 5분 → 성공 시 이력·apply 후 종료
 # - 이미 이력에 있으면 즉시 성공 종료 (이후 cron은 빨간 X 없이 끝남)
 # - 실행 시간(5.5시간)이 다 되면 workflow_dispatch로 자신을 즉시 다시 호출(이어달리기)
 # - 마감은 일요일 12:00 KST. 시작·성공·실패는 이슈 "[auto-draw] 실행 이력"에 기록
@@ -140,7 +140,7 @@ jobs:
               marker,
               `**[시작]** ${process.env.TARGET}회 자동 조회 대기 시작 — ${now} KST`,
               `- 시작 경로: ${process.env.TRIGGER}`,
-              '- 20:35부터 5분 간격으로 조회하고, 성공하면 이곳에 번호를 남깁니다.',
+              '- 20:35~20:50은 1분 간격, 이후 5분 간격으로 조회하고, 성공하면 이곳에 번호를 남깁니다.',
               `- 실행: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
             ].join('\n') });
 
@@ -163,7 +163,7 @@ jobs:
             echo "trigger=already_recorded"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Fetch (wait → 5-minute polling)
+      - name: Fetch (wait → dense then 5-minute polling)
         id: run
         if: steps.done.outcome != 'success' && (steps.check.outputs.recorded == 'false' || env.DRAW_NO != '')
         run: |
