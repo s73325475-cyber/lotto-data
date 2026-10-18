@@ -235,7 +235,8 @@ def trigger_info() -> tuple[str, str]:
     cron = os.environ.get("TRIGGER_SCHEDULE", "")
     if event == "schedule" and cron:
         delay = schedule_delay_minutes(cron, datetime.now(timezone.utc))
-        label = f"예약 실행 (`{cron}` UTC, 지연 {delay}분)" if delay is not None else f"예약 실행 (`{cron}`)"
+        # 백틱 금지: Actions bash 에 ${{ }} 로 넣으면 명령 치환됨
+        label = f"예약 실행 ({cron} UTC, 지연 {delay}분)" if delay is not None else f"예약 실행 ({cron})"
     elif event == "workflow_dispatch" and hop != "0":
         label = f"이어달리기 {hop}번째"
     elif event == "workflow_dispatch":

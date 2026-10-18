@@ -8,8 +8,9 @@
 # - 조회 성공 시 auto-draw/data 이력 커밋 (Add/Fix 실행 중이면 대기)
 #
 # 동작 (GitHub 예약 실행은 수 시간 지연·누락될 수 있음):
-# - 토요일 06:23 KST부터 여러 시각에 시작을 시도. 하나라도 시작되면 충분
-# - 시작된 실행은 20:35 KST까지 대기 → 5분 간격 조회 → 성공 시 기록 후 종료
+# - 추첨 시각(약 20:35 KST) 전후로만 시작. 아침부터 하루 종일 돌리지 않음
+# - 시작된 실행은 20:35 KST까지 대기 → 5분 간격 조회 → 성공 시 이력·apply 후 종료
+# - 이미 이력에 있으면 즉시 성공 종료 (이후 cron은 빨간 X 없이 끝남)
 # - 실행 시간(5.5시간)이 다 되면 workflow_dispatch로 자신을 즉시 다시 호출(이어달리기)
 # - 마감은 일요일 12:00 KST. 시작·성공·실패는 이슈 "[auto-draw] 실행 이력"에 기록
 
@@ -17,13 +18,11 @@ name: Auto draw
 
 on:
   schedule:
-    # 모두 UTC. 정각 부하를 피한 분 사용
-    - cron: "23 21 * * 5"   # 토 06:23 KST
-    - cron: "23 1 * * 6"    # 토 10:23 KST
-    - cron: "23 5 * * 6"    # 토 14:23 KST
-    - cron: "23 8 * * 6"    # 토 17:23 KST
-    - cron: "23 10 * * 6"   # 토 19:23 KST
+    # 모두 UTC. 추첨(토 20:35 KST) 전후만 — 아침·오후 슬롯 제거
+    - cron: "30 11 * * 6"   # 토 20:30 KST (추첨 직전)
     - cron: "41 11 * * 6"   # 토 20:41 KST
+    - cron: "5 12 * * 6"    # 토 21:05 KST
+    - cron: "35 12 * * 6"   # 토 21:35 KST
     - cron: "47 13 * * 6"   # 토 22:47 KST
     - cron: "17 0 * * 0"    # 일 09:17 KST (마감 전 보정)
   workflow_dispatch:
@@ -91,16 +90,16 @@ jobs:
       BUDGET: ${{ inputs.budget_minutes || '' }}
       GH_TOKEN: ${{ github.token }}
     outputs:
-      outcome: ${{ steps.gate.outputs.outcome }}
-      draw_no: ${{ steps.gate.outputs.draw_no }}
-      draw_date: ${{ steps.gate.outputs.draw_date }}
-      numbers: ${{ steps.gate.outputs.numbers }}
-      bonus: ${{ steps.gate.outputs.bonus }}
-      manual_match: ${{ steps.gate.outputs.manual_match }}
-      apply_gate: ${{ steps.gate.outputs.apply_gate }}
-      apply_wanted: ${{ steps.gate.outputs.apply_wanted }}
-      skip_fcm: ${{ steps.gate.outputs.skip_fcm }}
-      trigger: ${{ steps.gate.outputs.trigger }}
+      outcome: ${{ steps.gate.outputs.outcome || steps.done.outputs.outcome }}
+      draw_no: ${{ steps.gate.outputs.draw_no || steps.done.outputs.draw_no }}
+      draw_date: ${{ steps.gate.outputs.draw_date || steps.done.outputs.draw_date }}
+      numbers: ${{ steps.gate.outputs.numbers || steps.done.outputs.numbers }}
+      bonus: ${{ steps.gate.outputs.bonus || steps.done.outputs.bonus }}
+      manual_match: ${{ steps.gate.outputs.manual_match || steps.done.outputs.manual_match }}
+      apply_gate: ${{ steps.gate.outputs.apply_gate || steps.done.outputs.apply_gate }}
+      apply_wanted: ${{ steps.gate.outputs.apply_wanted || steps.done.outputs.apply_wanted }}
+      skip_fcm: ${{ steps.gate.outputs.skip_fcm || steps.done.outputs.skip_fcm }}
+      trigger: ${{ steps.gate.outputs.trigger || steps.done.outputs.trigger }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -145,9 +144,28 @@ jobs:
               `- 실행: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
             ].join('\n') });
 
+      # 이미 성공 이력이 있으면 조회·apply·로그 실패 없이 즉시 종료 (후속 cron 빨간 X 방지)
+      - name: Already recorded — success exit
+        id: done
+        if: steps.check.outputs.recorded == 'true' && env.DRAW_NO == '' && env.ONCE != 'true'
+        run: |
+          echo "회차 ${{ steps.check.outputs.target }} 이미 조회됨 — 추가 동작 없음"
+          {
+            echo "outcome=already_recorded"
+            echo "draw_no="
+            echo "draw_date="
+            echo "numbers="
+            echo "bonus="
+            echo "manual_match="
+            echo "apply_wanted=false"
+            echo "apply_gate=false"
+            echo "skip_fcm=${SKIP_FCM}"
+            echo "trigger=already_recorded"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Fetch (wait → 5-minute polling)
         id: run
-        if: steps.check.outputs.recorded == 'false' || env.DRAW_NO != ''
+        if: steps.done.outcome != 'success' && (steps.check.outputs.recorded == 'false' || env.DRAW_NO != '')
         run: |
           ARGS=(--history auto-draw/data/fetch_history.json --history-md auto-draw/data/FETCH_HISTORY.md)
           if [ "${ONCE}" = "true" ]; then ARGS+=(--once); fi
@@ -180,19 +198,25 @@ jobs:
           done
           echo "::error::history push failed (Add/Fix 데이터는 영향 없음)"; exit 1
 
+      # TRIG 등 문자열에 백틱(`)이 있어 ${{ }}를 run 본문에 넣으면 bash가 명령으로 실행함 → env로만 전달
       - name: Decide apply gate
         id: gate
+        if: steps.done.outcome != 'success'
+        env:
+          OUTCOME_IN: ${{ steps.run.outputs.outcome }}
+          DRAW: ${{ steps.run.outputs.draw_no }}
+          DATE: ${{ steps.run.outputs.draw_date }}
+          NUMS: ${{ steps.run.outputs.numbers }}
+          BONUS: ${{ steps.run.outputs.bonus }}
+          MANUAL: ${{ steps.run.outputs.manual_match }}
+          TRIG_CHECK: ${{ steps.check.outputs.trigger }}
+          TRIG_RUN: ${{ steps.run.outputs.trigger }}
         run: |
           set -euo pipefail
-          OUTCOME="${{ steps.run.outputs.outcome }}"
-          DRAW="${{ steps.run.outputs.draw_no }}"
-          DATE="${{ steps.run.outputs.draw_date }}"
-          NUMS="${{ steps.run.outputs.numbers }}"
-          BONUS="${{ steps.run.outputs.bonus }}"
-          MANUAL="${{ steps.run.outputs.manual_match }}"
-          TRIG="${{ steps.check.outputs.trigger }}"
+          OUTCOME="${OUTCOME_IN}"
+          TRIG="${TRIG_CHECK}"
           if [ -z "$OUTCOME" ]; then OUTCOME="already_recorded"; fi
-          if [ -z "$TRIG" ]; then TRIG="${{ steps.run.outputs.trigger }}"; fi
+          if [ -z "$TRIG" ]; then TRIG="${TRIG_RUN}"; fi
 
           APPLY_WANTED=false
           if [ "${APPLY_INPUT}" = "true" ]; then
@@ -222,7 +246,7 @@ jobs:
 
       - name: Relay (dispatch next run immediately)
         id: relay
-        if: steps.run.outputs.relay == 'true' && fromJSON(env.RELAY_HOP) < fromJSON(env.MAX_RELAY_HOPS)
+        if: steps.done.outcome != 'success' && steps.run.outputs.relay == 'true' && fromJSON(env.RELAY_HOP) < fromJSON(env.MAX_RELAY_HOPS)
         run: |
           NEXT=$((RELAY_HOP + 1))
           ARGS=(-f relay_hop="$NEXT")
@@ -237,7 +261,8 @@ jobs:
 
       - name: Log result
         if: >-
-          always() && (steps.run.outputs.outcome == 'ready' ||
+          always() && steps.done.outcome != 'success' && (
+          steps.run.outputs.outcome == 'ready' ||
           steps.run.outputs.outcome == 'api_error' ||
           steps.run.outputs.outcome == 'deadline_missed' ||
           (steps.run.outputs.relay == 'true' && steps.relay.outcome != 'success') ||
