@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Auto-draw 조회 전용 러너 (엑셀/Pages/FCM/add_draw/fix_draw 호출 금지).
 
-GitHub 예약 실행은 수 시간 지연되거나 누락될 수 있으므로 "정시 시작"에 의존하지 않는다.
-추첨 시각 전후 cron으로 시작되면
+GitHub 예약 실행은 수 시간 지연되거나 누락될 수 있으므로
+토 20:30~21:30 KST 구간에 5분마다 cron을 두고, 그 중 먼저 잡힌 실행이 폴링한다.
   - 추첨 전이면 20:35(KST)까지 대기
-  - 20:35~20:50은 1분 간격(발표 직후 구간)
-  - 20:50 이후는 5분 간격, 성공 시 이력 기록
+  - 20:35~21:35은 1분 간격(발표 후 첫 1시간)
+  - 21:35 이후는 5분 간격, 성공 시 이력 기록
   - 실행 시간 예산(기본 5.5시간)이 다 되면 relay=true 를 내보내 워크플로가 자신을 다시 호출
 하는 방식으로 성공 또는 마감(일요일 12:00 KST)까지 이어간다.
 
@@ -36,9 +36,9 @@ API = "https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do"
 KST = timezone(timedelta(hours=9))
 FIRST_DRAW_DATE = date(2002, 12, 7)  # 1회 추첨일 (토)
 POLL_START = dtime(20, 35)  # 추첨 방송 이후부터 조회
-POLL_DENSE_END = dtime(20, 50)  # 이 시각까지는 짧은 간격
-DENSE_INTERVAL_SECONDS = 60  # 20:35~20:50 — 1분
-NORMAL_INTERVAL_SECONDS = 5 * 60  # 20:50 이후 — 5분
+POLL_DENSE_END = dtime(21, 35)  # 발표 후 첫 1시간까지 짧은 간격
+DENSE_INTERVAL_SECONDS = 60  # 20:35~21:35 — 1분
+NORMAL_INTERVAL_SECONDS = 5 * 60  # 21:35 이후 — 5분
 DEADLINE_DAYS, DEADLINE_TIME = 1, dtime(12, 0)  # 추첨 다음날 12:00 KST
 ERROR_ALERT_SECONDS = 60 * 60  # 연속 오류가 약 1시간 지속되면 알림
 
@@ -261,13 +261,13 @@ def main() -> int:
         "--interval-minutes",
         type=int,
         default=NORMAL_INTERVAL_SECONDS // 60,
-        help="20:50 이후 조회 간격(분). 기본 5",
+        help="21:35 이후 조회 간격(분). 기본 5",
     )
     p.add_argument(
         "--dense-interval-seconds",
         type=int,
         default=DENSE_INTERVAL_SECONDS,
-        help="20:35~20:50 조회 간격(초). 기본 60",
+        help="20:35~21:35 조회 간격(초). 기본 60",
     )
     p.add_argument("--budget-minutes", type=int, default=330, help="이 실행의 최대 사용 시간 (job 제한 6시간 미만)")
     p.add_argument("--once", action="store_true", help="대기·재시도 없이 1회만 조회 (디버그)")
