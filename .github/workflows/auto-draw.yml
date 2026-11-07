@@ -7,36 +7,33 @@
 # - apply 는 기존 scripts/add_draw.py → Pages → FCM 을 "호출만" (Add와 동일 경로)
 # - 조회 성공 시 auto-draw/data 이력 커밋 (Add/Fix 실행 중이면 대기)
 #
-# 동작 (GitHub 예약 실행은 수 시간 지연·누락될 수 있음):
-# - 시작 시각은 토 20:30 KST 고정. 첫 1시간(20:30~21:30)은 5분마다 cron 으로 지연·누락 대비
-# - 시작된 실행은 20:35까지 대기 → 20:35~21:35은 1분 간격 → 이후 5분 → 성공 시 이력·apply 후 종료
-# - 이미 이력에 있으면 즉시 성공 종료 (이후 cron은 빨간 X 없이 끝남)
-# - 실행 시간(5.5시간)이 다 되면 workflow_dispatch로 자신을 즉시 다시 호출(이어달리기)
-# - 마감은 일요일 12:00 KST. 시작·성공·실패는 이슈 "[auto-draw] 실행 이력"에 기록
+# 동작 (GitHub schedule 은 수 시간 지연될 수 있음 — 2026-10-24 195분, 2026-10-31 284분 실측):
+# - 근본 대책: 추첨 몇 시간 전 cron 으로 "자리"를 잡고 20:35까지 대기.
+#   예산이 끝나면 workflow_dispatch 이어달리기(큐 지연 없음)로 20:35·폴링까지 연결.
+# - 조회 시작은 항상 20:35 KST. 20:35~21:35은 1분, 이후 5분.
+# - 저녁 cron 은 백업(듬성). 촘촘한 저녁-only cron 은 지연을 막지 못했음.
+# - repository_dispatch(auto-draw-ping): 외부 크론(cron-job.org 등)이 정시에 깨울 때 사용
+# - 이미 이력에 있으면 즉시 성공 종료. 마감 일 12:00 KST.
 
 name: Auto draw
 
 on:
   schedule:
-    # 모두 UTC. 시작 20:30 KST 유지 + 첫 1시간 5분 간격 (Actions 지연 시에도 다른 슬롯이 먼저 잡히도록)
-    - cron: "30 11 * * 6"   # 토 20:30 KST (시작)
-    - cron: "35 11 * * 6"   # 토 20:35
-    - cron: "40 11 * * 6"   # 토 20:40
+    # UTC. 낮 슬롯 = Actions 지연(최대 ~5h 관측) 대비 자리 잡기 → 대기 → relay
+    - cron: "17 3 * * 6"    # 토 12:17 KST (자리 잡기)
+    - cron: "17 5 * * 6"    # 토 14:17 KST
+    - cron: "17 7 * * 6"    # 토 16:17 KST
+    # 추첨 직전·직후 백업 (조회 시작 목표는 여전히 20:35)
+    - cron: "30 11 * * 6"   # 토 20:30 KST
     - cron: "45 11 * * 6"   # 토 20:45
-    - cron: "50 11 * * 6"   # 토 20:50
-    - cron: "55 11 * * 6"   # 토 20:55
-    - cron: "2 12 * * 6"    # 토 21:02 (:00 부하 회피)
     - cron: "5 12 * * 6"    # 토 21:05
-    - cron: "10 12 * * 6"   # 토 21:10
-    - cron: "15 12 * * 6"   # 토 21:15
-    - cron: "20 12 * * 6"   # 토 21:20
-    - cron: "25 12 * * 6"   # 토 21:25
-    - cron: "30 12 * * 6"   # 토 21:30 (첫 1시간 끝)
-    # 이후 보정 — 첫 구간이 전부 밀렸을 때
+    - cron: "30 12 * * 6"   # 토 21:30
     - cron: "2 13 * * 6"    # 토 22:02
-    - cron: "32 13 * * 6"   # 토 22:32
     - cron: "2 14 * * 6"    # 토 23:02
-    - cron: "17 0 * * 0"    # 일 09:17 KST (마감 전 보정)
+    - cron: "17 0 * * 0"    # 일 09:17 KST
+  # 외부 스케줄러 → POST /repos/.../dispatches  type=auto-draw-ping
+  repository_dispatch:
+    types: [auto-draw-ping]
   workflow_dispatch:
     inputs:
       draw_no:
@@ -77,10 +74,8 @@ permissions:
   pages: write
   id-token: write
 
-# 조회·대기는 pages 와 분리 — 장시간 폴링이 Add/Fix 배포를 막지 않음
-concurrency:
-  group: auto-draw-fetch
-  cancel-in-progress: false
+# 조회 job 은 concurrency 없음 — 낮 대기 job 이 저녁 cron/외부 핑을 막지 않게 함.
+# (이미 기록되면 즉시 종료. apply 만 pages 그룹으로 직렬화)
 
 env:
   LOG_ISSUE_TITLE: "[auto-draw] 실행 이력"
@@ -96,8 +91,8 @@ jobs:
       RELAY_HOP: ${{ inputs.relay_hop || '0' }}
       DRAW_NO: ${{ inputs.draw_no || '' }}
       ONCE: ${{ inputs.once || false }}
-      # cron(schedule)=항상 apply. 수동은 inputs.apply (기본 true)
-      APPLY_INPUT: ${{ github.event_name == 'schedule' || inputs.apply == true }}
+      # schedule·외부 핑=항상 apply. 수동은 inputs.apply (기본 true)
+      APPLY_INPUT: ${{ github.event_name == 'schedule' || github.event_name == 'repository_dispatch' || inputs.apply == true }}
       SKIP_FCM: ${{ inputs.skip_fcm == true }}
       BUDGET: ${{ inputs.budget_minutes || '' }}
       GH_TOKEN: ${{ github.token }}
@@ -152,7 +147,7 @@ jobs:
               marker,
               `**[시작]** ${process.env.TARGET}회 자동 조회 대기 시작 — ${now} KST`,
               `- 시작 경로: ${process.env.TRIGGER}`,
-              '- 20:35~21:35은 1분 간격, 이후 5분 간격으로 조회하고, 성공하면 이곳에 번호를 남깁니다.',
+              '- 추첨 전이면 20:35까지 대기(필요 시 이어달리기). 20:35~21:35은 1분, 이후 5분 간격으로 조회합니다.',
               `- 실행: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
             ].join('\n') });
 

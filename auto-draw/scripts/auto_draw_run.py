@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Auto-draw 조회 전용 러너 (엑셀/Pages/FCM/add_draw/fix_draw 호출 금지).
 
-GitHub 예약 실행은 수 시간 지연되거나 누락될 수 있으므로
-토 20:30~21:30 KST 구간에 5분마다 cron을 두고, 그 중 먼저 잡힌 실행이 폴링한다.
+GitHub schedule 은 수 시간 지연될 수 있다(실측 최대 ~5시간).
+낮 cron 으로 자리를 잡은 뒤 20:35까지 대기하고, 예산이 끝나면
+workflow_dispatch 이어달리기(지연 없음)로 추첨 시각까지 연결한다.
   - 추첨 전이면 20:35(KST)까지 대기
   - 20:35~21:35은 1분 간격(발표 후 첫 1시간)
   - 21:35 이후는 5분 간격, 성공 시 이력 기록
-  - 실행 시간 예산(기본 5.5시간)이 다 되면 relay=true 를 내보내 워크플로가 자신을 다시 호출
-하는 방식으로 성공 또는 마감(일요일 12:00 KST)까지 이어간다.
+  - 실행 시간 예산(기본 5.5시간)이 다 되면 relay=true 로 자기 재호출
 
 출력(outcome):
   ready             번호 확보·기록
@@ -241,6 +241,8 @@ def trigger_info() -> tuple[str, str]:
         delay = schedule_delay_minutes(cron, datetime.now(timezone.utc))
         # 백틱 금지: Actions bash 에 ${{ }} 로 넣으면 명령 치환됨
         label = f"예약 실행 ({cron} UTC, 지연 {delay}분)" if delay is not None else f"예약 실행 ({cron})"
+    elif event == "repository_dispatch":
+        label = "외부 핑 (repository_dispatch)"
     elif event == "workflow_dispatch" and hop != "0":
         label = f"이어달리기 {hop}번째"
     elif event == "workflow_dispatch":
