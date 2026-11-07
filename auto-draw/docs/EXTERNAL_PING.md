@@ -1,5 +1,16 @@
 # 외부 핑으로 Auto draw 정시 깨우기
 
+## PAT가 뭔가요?
+
+**PAT (Personal Access Token)** = GitHub이 발급하는 비밀번호 같은 문자열입니다.  
+cron-job.org 같은 **클라우드** 스케줄러가 GitHub API를 호출할 때 필요합니다.
+
+이 PC에서는 이미 `gh` 로그인이 되어 있어 **PAT 없이도** 핑할 수 있습니다.
+- 스크립트: `auto-draw/scripts/ping_auto_draw.ps1`
+- 작업 스케줄러: 토 20:35 / 20:40 / 20:50 KST (`LottoData-AutoDraw-Ping-*`)
+
+PC가 꺼져 있으면 스케줄러는 못 돌므로, 장기적으로는 아래 클라우드+PAT를 권장합니다.
+
 ## 왜 필요한가
 
 GitHub `schedule`(cron)은 **수 시간 지연**될 수 있다.
